@@ -161,7 +161,7 @@ def format_consolidated_dataframe(df: pd.DataFrame):
 
     # Apply conditional coloring to delta columns
     if delta_cols:
-        styled = styled.applymap(style_delta, subset=delta_cols)
+        styled = styled.map(style_delta, subset=delta_cols)
 
     # Style the rest
     styled = styled.set_properties(**{
