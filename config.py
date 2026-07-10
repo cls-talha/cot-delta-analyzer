@@ -3,7 +3,7 @@ Configuration for COT Analyzer Dashboard.
 Contains instrument definitions, release schedule, and URL templates.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 # ──────────────────────────────────────────────────────────────────────
 # Instruments we care about — maps display name to CFTC instrument name
@@ -55,7 +55,7 @@ RELEASE_DATES_2026 = sorted([
     date(2026, 12, 4), date(2026, 12, 11), date(2026, 12, 18), date(2026, 12, 28),
 ])
 
-from datetime import date, timedelta
+
 
 # ──────────────────────────────────────────────────────────────────────
 # URL Templates

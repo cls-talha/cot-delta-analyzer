@@ -10,23 +10,20 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import plotly.express as px
-import plotly.graph_objects as go
 import json
 import os
-import textwrap
-from typing import Optional, List, Dict
+from typing import Optional
 
 from cot_fetcher import fetch_current_week, fetch_archive_week, get_recent_release_dates
 from cot_parser import parse_report
 from cot_calculator import compute_consolidated_table, compute_historical_table, CATEGORY_SHORT
-from config import get_archive_url
 
 # ──────────────────────────────────────────────────────────────────────
 # Page config
 # ──────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="COT Analyzer Dashboard",
-    page_icon="📊",
+    page_icon=":material/bar_chart:",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -41,6 +38,15 @@ st.markdown("""
 /* Global */
 .stApp {
     font-family: 'Inter', sans-serif;
+}
+
+/* Center & constrain content on wide monitors */
+.block-container {
+    max-width: 1400px !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
 }
 
 /* Header area */
@@ -302,7 +308,7 @@ def main():
     # ── Header ──
     st.markdown("""
     <div class="main-header">
-        <h1>📊 COT Analyzer Dashboard</h1>
+        <h1>COT Analyzer Dashboard</h1>
         <div class="subtitle">
             Commitments of Traders — Financial Futures (Futures Only)
         </div>
@@ -312,23 +318,23 @@ def main():
     # ── Controls & Status Row ──
     recent_dates = get_recent_release_dates(count=100)
     
-    col1, col2, col3, col4 = st.columns([2, 3, 3, 4])
+    col1, col2, col3, _ = st.columns([2, 3, 3, 4])
     with col1:
-        if st.button("🔄 Refresh Data", use_container_width=True, type="primary"):
+        if st.button("Refresh Data", use_container_width=True, type="primary", icon=":material/refresh:"):
             st.cache_data.clear()
             st.rerun()
             
     with col2:
         if len(recent_dates) > 0:
             st.markdown(
-                f'<div class="date-badge">📌 Current: {recent_dates[0].strftime("%b %d, %Y")}</div>',
+                f'<div class="date-badge">Current: {recent_dates[0].strftime("%b %d, %Y")}</div>',
                 unsafe_allow_html=True,
             )
             
     with col3:
         if len(recent_dates) > 1:
             st.markdown(
-                f'<div class="date-badge">📎 Previous: {recent_dates[1].strftime("%b %d, %Y")}</div>',
+                f'<div class="date-badge">Previous: {recent_dates[1].strftime("%b %d, %Y")}</div>',
                 unsafe_allow_html=True,
             )
             
@@ -337,30 +343,33 @@ def main():
     # ── Load Data ──
     reports_data = []
     
-    with st.spinner("🔄 Loading COT report history..."):
+    with st.spinner("Loading COT report history..."):
         current = load_current_data()
         if current:
             reports_data.append(current)
         else:
-            st.error("⚠️ Failed to fetch current week data.")
+            st.error("Failed to fetch current week data.")
             return
             
         # We display a progress bar when loading from the web
-        progress_bar = st.progress(0.0)
-        progress_text = st.empty()
+        archive_dates = recent_dates[1:]
+        total_dates = len(archive_dates)
         
-        total_dates = len(recent_dates) - 1
-        for idx, archive_date in enumerate(recent_dates[1:]):
-            progress_percent = (idx + 1) / total_dates
-            progress_bar.progress(progress_percent)
-            progress_text.text(f"Loading archive report for {archive_date.strftime('%b %d, %Y')} ({idx+1}/{total_dates})...")
+        if total_dates > 0:
+            progress_bar = st.progress(0.0)
+            progress_text = st.empty()
             
-            arch = load_archive_data(archive_date.isoformat())
-            if arch:
-                reports_data.append(arch)
+            for idx, archive_date in enumerate(archive_dates):
+                progress_percent = (idx + 1) / total_dates
+                progress_bar.progress(progress_percent)
+                progress_text.text(f"Loading archive report for {archive_date.strftime('%b %d, %Y')} ({idx+1}/{total_dates})...")
                 
-        progress_bar.empty()
-        progress_text.empty()
+                arch = load_archive_data(archive_date.isoformat())
+                if arch:
+                    reports_data.append(arch)
+                    
+            progress_bar.empty()
+            progress_text.empty()
 
     # Deduplicate reports by report_date to prevent non-unique index errors
     seen_dates = set()
@@ -374,22 +383,19 @@ def main():
     reports_data = deduped_reports
 
     if not reports_data:
-        st.error("⚠️ No data available.")
+        st.error("No data available.")
         return
 
     current_data = reports_data[0]
     previous_data = reports_data[1] if len(reports_data) > 1 else None
 
     # ── Consolidated Table (Current Week) ──
-    st.markdown("### 📅 Current Week Overview")
+    st.markdown("### Current Week Overview")
     df_consolidated = compute_consolidated_table(current_data, previous_data)
     
     if not df_consolidated.empty:
         styled_consolidated = format_consolidated_dataframe(df_consolidated)
-        st.dataframe(
-            styled_consolidated,
-            use_container_width=True,
-        )
+        st.dataframe(styled_consolidated)
     else:
         st.warning("No data found for current week.")
 
@@ -397,15 +403,14 @@ def main():
 
     # ── Weekly Strength Pairs (based on Delta) ──
     if not df_consolidated.empty:
-        st.markdown("### 🔀 Weekly Strength Pairs (based on Delta)")
+        st.markdown("### Weekly Strength Pairs (based on Delta)")
         
-        # We display the pairs in 3 columns (one for each category)
-        p_col1, p_col2, p_col3 = st.columns(3)
+        # We display the pairs in 2 columns (LF and AM only)
+        p_col1, p_col2 = st.columns(2)
         
         categories_info = [
-            ("Leveraged Funds", "LF", p_col1, "👥"),
-            ("Asset Manager", "AM", p_col2, "🏢"),
-            ("Dealers", "DI", p_col3, "🏛️"),
+            ("Leveraged Funds", "LF", p_col1, ""),
+            ("Asset Manager", "AM", p_col2, ""),
         ]
         
         for cat_label, cat_short, col, icon in categories_info:
@@ -415,34 +420,34 @@ def main():
                 # HTML card container
                 html_content = f"""
                 <div style="
-                    background: rgba(30, 30, 60, 0.4);
+                    background: #ffffff;
                     padding: 1.2rem;
                     border-radius: 12px;
-                    border: 1px solid rgba(99, 102, 241, 0.2);
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    border: 1px solid rgba(99, 102, 241, 0.25);
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
                     margin-bottom: 1rem;
                 ">
                     <h4 style="
-                        color: #a5b4fc;
+                        color: #3730a3;
                         margin-top: 0;
                         margin-bottom: 15px;
                         font-size: 1.05rem;
-                        font-weight: 600;
-                        border-bottom: 1px solid rgba(99, 102, 241, 0.25);
+                        font-weight: 700;
+                        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
                         padding-bottom: 8px;
                         display: flex;
                         align-items: center;
                         gap: 8px;
                     ">
-                        <span>{icon}</span> {cat_label} ({cat_short})
+                        {cat_label} ({cat_short})
                     </h4>
                     <div style="display: flex; flex-direction: column; gap: 10px;">
                 """
                 
                 if pairs:
-                    medals = ["🥇", "🥈", "🥉", "🎗️"]
+                    ranks = ["S1", "S2", "S3", "S4"]
                     for idx, (strong, weak, s_val, w_val) in enumerate(pairs):
-                        medal = medals[idx] if idx < len(medals) else "•"
+                        rank = ranks[idx] if idx < len(ranks) else str(idx + 1)
                         diff = s_val - w_val
                         s_name = clean_currency_name(strong)
                         w_name = clean_currency_name(weak)
@@ -454,21 +459,22 @@ def main():
                             align-items: center;
                             font-size: 0.9rem;
                             padding: 4px 0;
+                            color: #1e1b4b;
                         ">
                             <span>
-                                {medal} <b>{s_name}</b> vs <b>{w_name}</b>
-                                <span style="color: #64748b; font-size: 0.8rem; margin-left: 4px;">
+                                <b style="color:#4338ca;">[{rank}]</b> <b>{s_name}</b> vs <b>{w_name}</b>
+                                <span style="color: #6b7280; font-size: 0.8rem; margin-left: 4px;">
                                     ({s_val:+.2f}% / {w_val:+.2f}%)
                                 </span>
                             </span>
                             <span style="
-                                color: #4ade80;
+                                color: #16a34a;
                                 font-weight: 700;
-                                background: rgba(74, 222, 128, 0.1);
+                                background: rgba(22, 163, 74, 0.1);
                                 padding: 2px 8px;
                                 border-radius: 6px;
                                 font-size: 0.85rem;
-                                border: 1px solid rgba(74, 222, 128, 0.15);
+                                border: 1px solid rgba(22, 163, 74, 0.25);
                             ">
                                 +{diff:.2f}%
                             </span>
@@ -491,7 +497,7 @@ def main():
 
     # ── Plotly Graphs ──
     if not df_consolidated.empty and previous_data:
-        st.markdown("### 📈 Weekly Delta Visualization (%)")
+        st.markdown("### Weekly Delta Visualization (%)")
         
         # Prepare data for plotting
         plot_df = df_consolidated.reset_index()
@@ -544,7 +550,7 @@ def main():
     st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
 
     # ── Historical Data (Last 3-4 Weeks) ──
-    st.markdown(f"### 🕰️ Historical Data (Last {len(reports_data)} Reports)")
+    st.markdown(f"### Historical Data (Last {len(reports_data)} Reports)")
     df_history = compute_historical_table(reports_data)
     
     if not df_history.empty:
@@ -557,10 +563,7 @@ def main():
                 # Extract cross-section for this date
                 df_date = df_history.xs(d, level="Report Date")
                 styled_history = format_historical_dataframe(df_date)
-                st.dataframe(
-                    styled_history,
-                    use_container_width=True,
-                )
+                st.dataframe(styled_history)
 
     # ── Footer ──
     st.markdown(
@@ -576,23 +579,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-
-# there are 3 extra rows in streamlit can you remove it also we have full year release date of cot report  if you dont have here it is
-
-# Month	Dates
-# January	05*	09	16	23	30
-# February	06	13	20	27	 
-# March	06	13	20	27	 
-# April	03	10	17	24	 
-# May	01	08	15	22	29
-# June 	05	12	22*	26	 
-# July	06*	10	17	24	31
-# August	07	14	21	28	 
-# September	04	11	18	25	 
-# October	02	09	16	23	30
-# November	06	16*	20	30*	 
-# December	04	11	18	28*	 
-
-
-# as of now, we have 3-4 week hisotry in webapp, i want delta highlight color as well as red of green for hisotrical do it for full year,, also base on delta give pairs as well, like strongest vs weakest and 2nd strong vs 1st weakest etc and no repeating pairs, right above graph and below table
