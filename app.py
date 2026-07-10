@@ -8,9 +8,13 @@ Single-page layout with Plotly graphs and historical tables.
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import plotly.express as px
 import plotly.graph_objects as go
+import json
+import os
+import textwrap
+from typing import Optional, List, Dict
 
 from cot_fetcher import fetch_current_week, fetch_archive_week, get_recent_release_dates
 from cot_parser import parse_report
@@ -111,6 +115,38 @@ st.markdown("""
 # ──────────────────────────────────────────────────────────────────────
 # Data loading with caching
 # ──────────────────────────────────────────────────────────────────────
+CACHE_FILE = "data/cot_cache.json"
+
+
+def get_cached_report(date_str: str) -> Optional[dict]:
+    """Retrieve report from disk cache."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                cache = json.load(f)
+                return cache.get(date_str)
+        except Exception as e:
+            print(f"[Cache] Error reading cache file: {e}")
+    return None
+
+
+def save_cached_report(date_str: str, report_data: dict):
+    """Save report to disk cache."""
+    try:
+        cache = {}
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                cache = json.load(f)
+        
+        cache[date_str] = report_data
+        
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f"[Cache] Error writing cache file: {e}")
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_current_data():
     """Fetch and parse current week data (cached 1 hour)."""
@@ -122,24 +158,34 @@ def load_current_data():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_archive_data(release_date_str: str):
-    """Fetch and parse archive week data (cached 1 hour)."""
-    from datetime import date
+    """Fetch and parse archive week data (uses persistent disk cache + memory cache)."""
+    # 1. Try disk cache first
+    cached = get_cached_report(release_date_str)
+    if cached:
+        return cached
+
+    # 2. Fetch from web
     parts = release_date_str.split("-")
     d = date(int(parts[0]), int(parts[1]), int(parts[2]))
     raw = fetch_archive_week(d)
     if raw is None:
         return None
-    return parse_report(raw)
+    
+    parsed = parse_report(raw)
+    if parsed:
+        # Save to disk cache
+        save_cached_report(release_date_str, parsed)
+    return parsed
 
 
 def style_delta(val):
-    """Apply red/green styling to delta values."""
+    """Apply red/green styling to delta values with subtle background highlights."""
     if pd.isna(val) or val is None:
         return "color: #64748b"
     if val > 0:
-        return "color: #4ade80; font-weight: 600"
+        return "color: #4ade80; font-weight: 600; background-color: rgba(74, 222, 128, 0.1);"
     elif val < 0:
-        return "color: #f87171; font-weight: 600"
+        return "color: #f87171; font-weight: 600; background-color: rgba(248, 113, 113, 0.1);"
     return "color: #94a3b8"
 
 
@@ -161,7 +207,10 @@ def format_consolidated_dataframe(df: pd.DataFrame):
 
     # Apply conditional coloring to delta columns
     if delta_cols:
-        styled = styled.map(style_delta, subset=delta_cols)
+        if hasattr(styled, "map"):
+            styled = styled.map(style_delta, subset=delta_cols)
+        else:
+            styled = styled.applymap(style_delta, subset=delta_cols)
 
     # Style the rest
     styled = styled.set_properties(**{
@@ -175,18 +224,75 @@ def format_consolidated_dataframe(df: pd.DataFrame):
 def format_historical_dataframe(df: pd.DataFrame):
     """Apply formatting to the historical DataFrame."""
     format_dict = {}
+    delta_cols = []
+    
     for col in df.columns:
         if "Net Pos" in col:
             format_dict[col] = "{:,.0f}"
         elif "Net %" in col:
             format_dict[col] = "{:.2f}%"
+        elif "Δ" in col:
+            format_dict[col] = "{:+.2f}%"
+            delta_cols.append(col)
             
     styled = df.style.format(format_dict, na_rep="—")
+    
+    # Apply conditional coloring to delta columns
+    if delta_cols:
+        if hasattr(styled, "map"):
+            styled = styled.map(style_delta, subset=delta_cols)
+        else:
+            styled = styled.applymap(style_delta, subset=delta_cols)
+            
     styled = styled.set_properties(**{
         "text-align": "right",
         "font-size": "0.85rem",
     })
     return styled
+
+
+def clean_html_string(html: str) -> str:
+    """Strip all leading whitespace from each line of the HTML string to avoid markdown code block parsing."""
+    return "\n".join(line.strip() for line in html.strip().split("\n"))
+
+
+def clean_currency_name(name: str) -> str:
+    """Clean currency names for pairs display (e.g. 'USD (DXY)' -> 'USD')."""
+    return name.split(" ")[0]
+
+
+def calculate_strength_pairs(df: pd.DataFrame, cat_short: str):
+    """
+    Calculate currency pairs based on delta values for a given category.
+    Returns a list of tuples: (strong_curr, weak_curr, strong_val, weak_val)
+    sorted from strongest to weakest difference.
+    """
+    delta_col = f"{cat_short} Δ"
+    if delta_col not in df.columns:
+        return []
+    
+    # Get currencies and their delta values
+    series = df[delta_col].dropna()
+    if len(series) < 2:
+        return []
+    
+    # Sort descending
+    sorted_series = series.sort_values(ascending=False)
+    currencies = sorted_series.index.tolist()
+    values = sorted_series.values.tolist()
+    
+    pairs = []
+    n = len(currencies)
+    # We pair index i with index n - 1 - i
+    # S1 vs W1, S2 vs W2, S3 vs W3, S4 vs W4
+    for i in range(n // 2):
+        strong_curr = currencies[i]
+        weak_curr = currencies[n - 1 - i]
+        strong_val = values[i]
+        weak_val = values[n - 1 - i]
+        pairs.append((strong_curr, weak_curr, strong_val, weak_val))
+        
+    return pairs
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -204,7 +310,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # ── Controls & Status Row ──
-    recent_dates = get_recent_release_dates(count=4)
+    recent_dates = get_recent_release_dates(count=100)
     
     col1, col2, col3, col4 = st.columns([2, 3, 3, 4])
     with col1:
@@ -231,20 +337,41 @@ def main():
     # ── Load Data ──
     reports_data = []
     
-    with st.spinner("🔄 Fetching data from CFTC..."):
-        if len(recent_dates) > 0:
-            current = load_current_data()
-            if current:
-                reports_data.append(current)
-            else:
-                st.error("⚠️ Failed to fetch current week data.")
-                return
-                
-        # Fetch up to 3 previous weeks
-        for archive_date in recent_dates[1:]:
+    with st.spinner("🔄 Loading COT report history..."):
+        current = load_current_data()
+        if current:
+            reports_data.append(current)
+        else:
+            st.error("⚠️ Failed to fetch current week data.")
+            return
+            
+        # We display a progress bar when loading from the web
+        progress_bar = st.progress(0.0)
+        progress_text = st.empty()
+        
+        total_dates = len(recent_dates) - 1
+        for idx, archive_date in enumerate(recent_dates[1:]):
+            progress_percent = (idx + 1) / total_dates
+            progress_bar.progress(progress_percent)
+            progress_text.text(f"Loading archive report for {archive_date.strftime('%b %d, %Y')} ({idx+1}/{total_dates})...")
+            
             arch = load_archive_data(archive_date.isoformat())
             if arch:
                 reports_data.append(arch)
+                
+        progress_bar.empty()
+        progress_text.empty()
+
+    # Deduplicate reports by report_date to prevent non-unique index errors
+    seen_dates = set()
+    deduped_reports = []
+    for r in reports_data:
+        if r and "report_date" in r and r["report_date"]:
+            d = r["report_date"]
+            if d not in seen_dates:
+                seen_dates.add(d)
+                deduped_reports.append(r)
+    reports_data = deduped_reports
 
     if not reports_data:
         st.error("⚠️ No data available.")
@@ -262,10 +389,103 @@ def main():
         st.dataframe(
             styled_consolidated,
             use_container_width=True,
-            height=430,
         )
     else:
         st.warning("No data found for current week.")
+
+    st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
+
+    # ── Weekly Strength Pairs (based on Delta) ──
+    if not df_consolidated.empty:
+        st.markdown("### 🔀 Weekly Strength Pairs (based on Delta)")
+        
+        # We display the pairs in 3 columns (one for each category)
+        p_col1, p_col2, p_col3 = st.columns(3)
+        
+        categories_info = [
+            ("Leveraged Funds", "LF", p_col1, "👥"),
+            ("Asset Manager", "AM", p_col2, "🏢"),
+            ("Dealers", "DI", p_col3, "🏛️"),
+        ]
+        
+        for cat_label, cat_short, col, icon in categories_info:
+            with col:
+                pairs = calculate_strength_pairs(df_consolidated, cat_short)
+                
+                # HTML card container
+                html_content = f"""
+                <div style="
+                    background: rgba(30, 30, 60, 0.4);
+                    padding: 1.2rem;
+                    border-radius: 12px;
+                    border: 1px solid rgba(99, 102, 241, 0.2);
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    margin-bottom: 1rem;
+                ">
+                    <h4 style="
+                        color: #a5b4fc;
+                        margin-top: 0;
+                        margin-bottom: 15px;
+                        font-size: 1.05rem;
+                        font-weight: 600;
+                        border-bottom: 1px solid rgba(99, 102, 241, 0.25);
+                        padding-bottom: 8px;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    ">
+                        <span>{icon}</span> {cat_label} ({cat_short})
+                    </h4>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                """
+                
+                if pairs:
+                    medals = ["🥇", "🥈", "🥉", "🎗️"]
+                    for idx, (strong, weak, s_val, w_val) in enumerate(pairs):
+                        medal = medals[idx] if idx < len(medals) else "•"
+                        diff = s_val - w_val
+                        s_name = clean_currency_name(strong)
+                        w_name = clean_currency_name(weak)
+                        
+                        html_content += f"""
+                        <div style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            font-size: 0.9rem;
+                            padding: 4px 0;
+                        ">
+                            <span>
+                                {medal} <b>{s_name}</b> vs <b>{w_name}</b>
+                                <span style="color: #64748b; font-size: 0.8rem; margin-left: 4px;">
+                                    ({s_val:+.2f}% / {w_val:+.2f}%)
+                                </span>
+                            </span>
+                            <span style="
+                                color: #4ade80;
+                                font-weight: 700;
+                                background: rgba(74, 222, 128, 0.1);
+                                padding: 2px 8px;
+                                border-radius: 6px;
+                                font-size: 0.85rem;
+                                border: 1px solid rgba(74, 222, 128, 0.15);
+                            ">
+                                +{diff:.2f}%
+                            </span>
+                        </div>
+                        """
+                else:
+                    html_content += """
+                    <div style="color: #64748b; font-size: 0.9rem; font-style: italic; text-align: center; padding: 10px 0;">
+                        No pairs available
+                    </div>
+                    """
+                
+                html_content += """
+                    </div>
+                </div>
+                """
+                st.markdown(clean_html_string(html_content), unsafe_allow_html=True)
 
     st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
 
@@ -332,8 +552,8 @@ def main():
         # We extract unique dates (they preserve order from reports_data)
         dates = df_history.index.get_level_values("Report Date").unique()
         
-        for d in dates:
-            with st.expander(f"Report Date: {d}", expanded=True):
+        for idx, d in enumerate(dates):
+            with st.expander(f"Report Date: {d}", expanded=(idx == 0)):
                 # Extract cross-section for this date
                 df_date = df_history.xs(d, level="Report Date")
                 styled_history = format_historical_dataframe(df_date)
@@ -355,6 +575,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 # there are 3 extra rows in streamlit can you remove it also we have full year release date of cot report  if you dont have here it is
 
