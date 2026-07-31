@@ -14,6 +14,7 @@ import json
 import os
 from typing import Optional
 
+from cot_parser import parse_report
 from cot_fetcher import fetch_current_week, fetch_archive_week, get_recent_release_dates
 from cot_calculator import (
     compute_consolidated_table,
