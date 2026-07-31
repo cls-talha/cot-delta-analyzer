@@ -15,8 +15,13 @@ import os
 from typing import Optional
 
 from cot_fetcher import fetch_current_week, fetch_archive_week, get_recent_release_dates
-from cot_parser import parse_report
-from cot_calculator import compute_consolidated_table, compute_historical_table, CATEGORY_SHORT
+from cot_calculator import (
+    compute_consolidated_table,
+    compute_historical_table,
+    compute_lf_detail_table,
+    compute_lf_detail_historical_table,
+    CATEGORY_SHORT,
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Page config
@@ -97,7 +102,7 @@ st.markdown("""
     border-bottom: 2px solid rgba(99,102,241,0.3) !important;
 }
 .dataframe td {
-    text-align: right !important;
+    text-align: center !important;
     padding: 0.5rem 0.8rem !important;
     border-bottom: 1px solid rgba(255,255,255,0.04) !important;
 }
@@ -220,7 +225,7 @@ def format_consolidated_dataframe(df: pd.DataFrame):
 
     # Style the rest
     styled = styled.set_properties(**{
-        "text-align": "right",
+        "text-align": "center",
         "font-size": "0.85rem",
     })
 
@@ -251,10 +256,51 @@ def format_historical_dataframe(df: pd.DataFrame):
             styled = styled.applymap(style_delta, subset=delta_cols)
             
     styled = styled.set_properties(**{
-        "text-align": "right",
+        "text-align": "center",
         "font-size": "0.85rem",
     })
     return styled
+
+
+def format_lf_detail_dataframe(df: pd.DataFrame):
+    """Apply formatting to the Leveraged Funds detail DataFrame."""
+    format_dict = {}
+    colored_cols = []
+    
+    for col in df.columns:
+        if "Δ" in col:
+            colored_cols.append(col)
+            if "%" in col:
+                format_dict[col] = "{:+.2f}%"
+            else:
+                format_dict[col] = "{:+,.0f}"
+        elif "Net" in col:
+            colored_cols.append(col)
+            if "Percent" in col or "%" in col:
+                format_dict[col] = "{:.2f}%"
+            else:
+                format_dict[col] = "{:,.0f}"
+        elif "%" in col:
+            format_dict[col] = "{:.2f}%"
+        else:
+            format_dict[col] = "{:,.0f}"
+
+    styled = df.style.format(format_dict, na_rep="—")
+
+    # Apply conditional red/green coloring to Net Positions, Net Percent, Net Percent LF and all Delta columns
+    if colored_cols:
+        if hasattr(styled, "map"):
+            styled = styled.map(style_delta, subset=colored_cols)
+        else:
+            styled = styled.applymap(style_delta, subset=colored_cols)
+
+    styled = styled.set_properties(**{
+        "text-align": "center",
+        "font-size": "0.85rem",
+    })
+    return styled
+
+
 
 
 def clean_html_string(html: str) -> str:
@@ -320,7 +366,7 @@ def main():
     
     col1, col2, col3, _ = st.columns([2, 3, 3, 4])
     with col1:
-        if st.button("Refresh Data", use_container_width=True, type="primary", icon=":material/refresh:"):
+        if st.button("Refresh Data", use_container_width=True, type="primary"):
             st.cache_data.clear()
             st.rerun()
             
@@ -390,14 +436,106 @@ def main():
     previous_data = reports_data[1] if len(reports_data) > 1 else None
 
     # ── Consolidated Table (Current Week) ──
-    st.markdown("### Current Week Overview")
     df_consolidated = compute_consolidated_table(current_data, previous_data)
     
+    header_col, copy_col = st.columns([7, 3])
+    with header_col:
+        st.markdown("### Current Week Overview")
+    with copy_col:
+        if not df_consolidated.empty:
+            tsv_data = df_consolidated.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
+            copy_html = f"""
+            <div style="text-align: right;">
+                <button id="copy-btn" onclick="copyTableToClipboard()" style="
+                    background-color: #6366f1;
+                    color: white;
+                    border: none;
+                    padding: 0.4rem 0.8rem;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    width: 100%;
+                ">
+                    Copy Table to Clipboard
+                </button>
+            </div>
+            <script>
+            function copyTableToClipboard() {{
+                const text = `{tsv_data}`;
+                navigator.clipboard.writeText(text).then(() => {{
+                    const btn = document.getElementById('copy-btn');
+                    btn.innerText = 'Copied!';
+                    btn.style.backgroundColor = '#16a34a';
+                    setTimeout(() => {{
+                        btn.innerText = 'Copy Table to Clipboard';
+                        btn.style.backgroundColor = '#6366f1';
+                    }}, 2000);
+                }}).catch(err => {{
+                    console.error('Failed to copy: ', err);
+                }});
+            }}
+            </script>
+            """
+            st.components.v1.html(copy_html, height=45)
+            
     if not df_consolidated.empty:
         styled_consolidated = format_consolidated_dataframe(df_consolidated)
-        st.dataframe(styled_consolidated)
+        st.dataframe(styled_consolidated, use_container_width=True)
     else:
         st.warning("No data found for current week.")
+
+    # ── Leveraged Funds Detail Table (Current Week) ──
+    df_lf_detail = compute_lf_detail_table(current_data, previous_data)
+    if not df_lf_detail.empty:
+        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+        lf_header_col, lf_copy_col = st.columns([7, 3])
+        with lf_header_col:
+            st.markdown("### Leveraged Funds Breakdown")
+        with lf_copy_col:
+            tsv_lf_data = df_lf_detail.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
+            copy_lf_html = f"""
+            <div style="text-align: right;">
+                <button id="copy-lf-btn" onclick="copyLfTableToClipboard()" style="
+                    background-color: #6366f1;
+                    color: white;
+                    border: none;
+                    padding: 0.4rem 0.8rem;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    width: 100%;
+                ">
+                    Copy Table to Clipboard
+                </button>
+            </div>
+            <script>
+            function copyLfTableToClipboard() {{
+                const text = `{tsv_lf_data}`;
+                navigator.clipboard.writeText(text).then(() => {{
+                    const btn = document.getElementById('copy-lf-btn');
+                    btn.innerText = 'Copied!';
+                    btn.style.backgroundColor = '#16a34a';
+                    setTimeout(() => {{
+                        btn.innerText = 'Copy Table to Clipboard';
+                        btn.style.backgroundColor = '#6366f1';
+                    }}, 2000);
+                }}).catch(err => {{
+                    console.error('Failed to copy: ', err);
+                }});
+            }}
+            </script>
+            """
+            st.components.v1.html(copy_lf_html, height=45)
+
+        styled_lf_detail = format_lf_detail_dataframe(df_lf_detail)
+        st.dataframe(styled_lf_detail, use_container_width=True)
+
+
+
 
     st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
 
@@ -552,6 +690,7 @@ def main():
     # ── Historical Data (Last 3-4 Weeks) ──
     st.markdown(f"### Historical Data (Last {len(reports_data)} Reports)")
     df_history = compute_historical_table(reports_data)
+    df_lf_history = compute_lf_detail_historical_table(reports_data)
     
     if not df_history.empty:
         # df_history has a MultiIndex: ["Currency", "Report Date"]
@@ -563,7 +702,14 @@ def main():
                 # Extract cross-section for this date
                 df_date = df_history.xs(d, level="Report Date")
                 styled_history = format_historical_dataframe(df_date)
-                st.dataframe(styled_history)
+                st.dataframe(styled_history, use_container_width=True)
+
+                if not df_lf_history.empty and d in df_lf_history.index.get_level_values("Report Date"):
+                    st.markdown("#### Leveraged Funds Breakdown")
+                    df_date_lf = df_lf_history.xs(d, level="Report Date")
+                    styled_date_lf = format_lf_detail_dataframe(df_date_lf)
+                    st.dataframe(styled_date_lf, use_container_width=True)
+
 
     # ── Footer ──
     st.markdown(

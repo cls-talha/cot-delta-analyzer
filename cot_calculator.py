@@ -82,16 +82,16 @@ def compute_consolidated_table(
     df = pd.DataFrame(rows)
     df = df.set_index("Currency")
     
-    # Reorder columns so Deltas are at the end
-    base_cols = []
+    # Reorder columns so Deltas are right in front of currency / first columns
     delta_cols = []
+    base_cols = []
     for col in df.columns:
         if "Δ" in col:
             delta_cols.append(col)
         else:
             base_cols.append(col)
             
-    df = df[base_cols + delta_cols]
+    df = df[delta_cols + base_cols]
     return df
 
 
@@ -146,14 +146,187 @@ def compute_historical_table(historical_data_list: List[Dict]) -> pd.DataFrame:
     # Set multi-index for better presentation
     df = df.set_index(["Currency", "Report Date"])
     
-    # Reorder columns so Deltas are at the end
-    base_cols = []
+    # Reorder columns so Deltas are right in front of currency / first columns
     delta_cols = []
+    base_cols = []
     for col in df.columns:
         if "Δ" in col:
             delta_cols.append(col)
         else:
             base_cols.append(col)
             
-    df = df[base_cols + delta_cols]
+    df = df[delta_cols + base_cols]
     return df
+
+
+def compute_lf_detail_table(
+    current_data: Dict,
+    previous_data: Optional[Dict],
+) -> pd.DataFrame:
+    """
+    Build detailed Leveraged Funds DataFrame containing OI, position breakdowns, and deltas.
+    Columns follow user's exact ordering requirement:
+    1. Net Positions
+    2. Net Percent
+    3. Net Percent LF
+    4. Net % LF Δ
+    5. Δ Total Open Interest
+    6. Total Open Interest
+    7. Δ LF Open Interest
+    8. Total LF Open Interest
+    9. Long Positions
+    10. Short Positions
+    11. Δ Long Positions
+    12. Δ Short Positions
+    """
+    rows = []
+    instruments = current_data.get("instruments", {})
+
+    for name in INSTRUMENT_ORDER:
+        if name not in instruments:
+            continue
+
+        inst = instruments[name]
+        total_oi = inst.get("open_interest", 0)
+        lf = inst.get("leveraged_funds", {})
+        long_pos = lf.get("long", 0)
+        short_pos = lf.get("short", 0)
+        
+        lf_total_oi = long_pos + short_pos
+        net_pos = long_pos - short_pos
+        net_pct = (net_pos / total_oi * 100) if total_oi != 0 else 0.0
+        net_pct_lf = (net_pos / lf_total_oi * 100) if lf_total_oi != 0 else 0.0
+
+        row = {
+            "Currency": name,
+            "Net Positions": int(net_pos),
+            "Net Percent": round(net_pct, 2),
+            "Net Percent LF": round(net_pct_lf, 2),
+            "Total Open Interest": int(total_oi),
+            "Total LF Open Interest": int(lf_total_oi),
+            "Long Positions": int(long_pos),
+            "Short Positions": int(short_pos),
+        }
+
+        if previous_data and name in previous_data.get("instruments", {}):
+            prev_inst = previous_data["instruments"][name]
+            prev_total_oi = prev_inst.get("open_interest", 0)
+            prev_lf = prev_inst.get("leveraged_funds", {})
+            prev_long = prev_lf.get("long", 0)
+            prev_short = prev_lf.get("short", 0)
+            prev_lf_total_oi = prev_long + prev_short
+            prev_net_pos = prev_long - prev_short
+            prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
+
+            row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
+            row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
+            row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
+            row["Δ Long Positions"] = int(long_pos - prev_long)
+            row["Δ Short Positions"] = int(short_pos - prev_short)
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows).set_index("Currency")
+
+    desired_order = [
+        "Net Positions",
+        "Net Percent",
+        "Net Percent LF",
+        "Net % LF Δ",
+        "Δ Total Open Interest",
+        "Δ LF Open Interest",
+        "Δ Long Positions",
+        "Δ Short Positions",
+        "Total Open Interest",
+        "Total LF Open Interest",
+        "Long Positions",
+        "Short Positions",
+    ]
+
+    existing_cols = [c for c in desired_order if c in df.columns]
+    return df[existing_cols]
+
+
+def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.DataFrame:
+    """
+    Build multi-week history table for Leveraged Funds detail with deltas.
+    """
+    rows = []
+
+    for name in INSTRUMENT_ORDER:
+        for idx, report_data in enumerate(historical_data_list):
+            if not report_data or "instruments" not in report_data or name not in report_data["instruments"]:
+                continue
+
+            inst = report_data["instruments"][name]
+            report_date = report_data.get("report_date", f"Week {-idx}")
+
+            total_oi = inst.get("open_interest", 0)
+            lf = inst.get("leveraged_funds", {})
+            long_pos = lf.get("long", 0)
+            short_pos = lf.get("short", 0)
+
+            lf_total_oi = long_pos + short_pos
+            net_pos = long_pos - short_pos
+            net_pct = (net_pos / total_oi * 100) if total_oi != 0 else 0.0
+            net_pct_lf = (net_pos / lf_total_oi * 100) if lf_total_oi != 0 else 0.0
+
+            row = {
+                "Currency": name,
+                "Report Date": report_date,
+                "Net Positions": int(net_pos),
+                "Net Percent": round(net_pct, 2),
+                "Net Percent LF": round(net_pct_lf, 2),
+                "Total Open Interest": int(total_oi),
+                "Total LF Open Interest": int(lf_total_oi),
+                "Long Positions": int(long_pos),
+                "Short Positions": int(short_pos),
+            }
+
+            if idx + 1 < len(historical_data_list):
+                prev_report = historical_data_list[idx + 1]
+                if prev_report and "instruments" in prev_report and name in prev_report["instruments"]:
+                    prev_inst = prev_report["instruments"][name]
+                    prev_total_oi = prev_inst.get("open_interest", 0)
+                    prev_lf = prev_inst.get("leveraged_funds", {})
+                    prev_long = prev_lf.get("long", 0)
+                    prev_short = prev_lf.get("short", 0)
+                    prev_lf_total_oi = prev_long + prev_short
+                    prev_net_pos = prev_long - prev_short
+                    prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
+
+                    row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
+                    row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
+                    row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
+                    row["Δ Long Positions"] = int(long_pos - prev_long)
+                    row["Δ Short Positions"] = int(short_pos - prev_short)
+
+            rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows).set_index(["Currency", "Report Date"])
+
+    desired_order = [
+        "Net Positions",
+        "Net Percent",
+        "Net Percent LF",
+        "Net % LF Δ",
+        "Δ Total Open Interest",
+        "Δ LF Open Interest",
+        "Δ Long Positions",
+        "Δ Short Positions",
+        "Total Open Interest",
+        "Total LF Open Interest",
+        "Long Positions",
+        "Short Positions",
+    ]
+
+    existing_cols = [c for c in desired_order if c in df.columns]
+    return df[existing_cols]
+
+

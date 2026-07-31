@@ -1,0 +1,275 @@
+// ============================================================
+// COT Leveraged Funds — Direction & Strength Indicator (Pine v6)
+// ============================================================
+// Displays two metrics for the current chart's symbol:
+//   1. Net Position  → Bullish / Bearish + strength bar
+//   2. Delta (WoW)   → Acceleration direction + magnitude
+//
+// Data: CFTC Traders in Financial Futures (TFF) — LF only
+// Timeframe: Weekly COT reports (auto-backfilled 1 year)
+// Auto-updates on new week; manual refresh via inputs.
+// ============================================================
+
+//@version=6
+indicator(
+     title           = "COT — LF Direction & Strength",
+     shorttitle      = "COT LF",
+     overlay         = false,
+     max_bars_back   = 500,
+     max_lines_count = 50,
+     max_labels_count= 50
+ )
+
+// ─────────────────────────────────────────────────────────────
+// ░░  INPUTS
+// ─────────────────────────────────────────────────────────────
+grp_sym   = "Symbol Override"
+grp_look  = "Lookback & History"
+grp_disp  = "Display"
+grp_upd   = "Data Update"
+
+// Manual symbol override (leave blank = auto-detect from chart)
+sym_override = input.symbol("", title = "Override Symbol (leave blank = auto)", group = grp_sym)
+
+// Lookback window for Net % normalisation (52 weeks = 1 year)
+lookback     = input.int(52, title = "Normalisation Lookback (weeks)", minval = 4, maxval = 156, group = grp_look)
+
+// Show historical area ribbons
+show_history = input.bool(true, title = "Show History (1 Year Area)", group = grp_look)
+
+// Force a refresh timestamp — changing this value flushes cache & re-pulls
+refresh_ts   = input.int(0, title = "Manual Refresh (change to force update)", minval = 0, group = grp_upd, tooltip = "Increment this by 1 to force a full data refresh on next bar calculation.")
+
+// ─────────────────────────────────────────────────────────────
+// ░░  SYMBOL → COT TICKER MAPPING  (LF only — TFF report)
+// ─────────────────────────────────────────────────────────────
+// Map chart symbol → COT root
+f_detect_root() =>
+    sym = sym_override != "" ? sym_override : syminfo.ticker
+    sym_upper = str.upper(sym)
+    
+    res = ""
+    if str.contains(sym_upper, "EUR")
+        res := "6E"
+    else if str.contains(sym_upper, "GBP")
+        res := "6B"
+    else if str.contains(sym_upper, "JPY")
+        res := "6J"
+    else if str.contains(sym_upper, "CAD")
+        res := "6C"
+    else if str.contains(sym_upper, "AUD")
+        res := "6A"
+    else if str.contains(sym_upper, "NZD")
+        res := "6N"
+    else if str.contains(sym_upper, "CHF")
+        res := "6S"
+    else if str.contains(sym_upper, "DXY") or str.contains(sym_upper, "DX1!") or str.contains(sym_upper, "USDX") or sym_upper == "DX"
+        res := "DX"
+    else if str.length(sym_upper) >= 6
+        res := str.substring(sym_upper, 0, 3) == "USD" ? str.substring(sym_upper, 3, 6) : str.substring(sym_upper, 0, 3)
+    res
+
+// ─────────────────────────────────────────────────────────────
+// ░░  DATA FETCHING  (Weekly COT, look-ahead = on for display)
+// ─────────────────────────────────────────────────────────────
+cot_root = f_detect_root()
+
+// --- EUR (6E) ---
+eur_l = request.security("CME_TFF:6E_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+eur_s = request.security("CME_TFF:6E_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- GBP (6B) ---
+gbp_l = request.security("CME_TFF:6B_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+gbp_s = request.security("CME_TFF:6B_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- JPY (6J) ---
+jpy_l = request.security("CME_TFF:6J_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+jpy_s = request.security("CME_TFF:6J_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- CAD (6C) ---
+cad_l = request.security("CME_TFF:6C_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+cad_s = request.security("CME_TFF:6C_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- AUD (6A) ---
+aud_l = request.security("CME_TFF:6A_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+aud_s = request.security("CME_TFF:6A_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- NZD (6N) ---
+nzd_l = request.security("CME_TFF:6N_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+nzd_s = request.security("CME_TFF:6N_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- CHF (6S) ---
+chf_l = request.security("CME_TFF:6S_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+chf_s = request.security("CME_TFF:6S_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// --- USD / DXY (DX — ICE) ---
+dx_l  = request.security("ICEUS_TFF:DX_FUT_LEV_LONG",  "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+dx_s  = request.security("ICEUS_TFF:DX_FUT_LEV_SHORT", "W", close, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+// ─────────────────────────────────────────────────────────────
+// ░░  SELECT ACTIVE PAIR BASED ON DETECTED ROOT
+// ─────────────────────────────────────────────────────────────
+lf_long = switch cot_root
+    "6E" => eur_l
+    "6B" => gbp_l
+    "6J" => jpy_l
+    "6C" => cad_l
+    "6A" => aud_l
+    "6N" => nzd_l
+    "6S" => chf_l
+    "DX" => dx_l
+    =>      na
+
+lf_short = switch cot_root
+    "6E" => eur_s
+    "6B" => gbp_s
+    "6J" => jpy_s
+    "6C" => cad_s
+    "6A" => aud_s
+    "6N" => nzd_s
+    "6S" => chf_s
+    "DX" => dx_s
+    =>      na
+
+// ─────────────────────────────────────────────────────────────
+// ░░  METRICS CALCULATION
+// ─────────────────────────────────────────────────────────────
+
+// 1. Raw net position  (contracts)
+net_raw = lf_long - lf_short
+
+// 2. Net %  =  net / (long + short) × 100
+total_ls   = lf_long + lf_short
+net_pct    = total_ls != 0 ? (net_raw / total_ls) * 100.0 : na
+
+// 3. Delta  =  this week's net% − last week's net%
+net_pct_prev = na(net_pct[1]) ? na : net_pct[1]
+delta        = net_pct - net_pct_prev
+
+// 4. Normalised Net % in [−100, +100] over lookback window
+highest_np = ta.highest(net_pct, lookback)
+lowest_np  = ta.lowest(net_pct,  lookback)
+range_np   = highest_np - lowest_np
+norm_pct   = range_np != 0 ? ((net_pct - lowest_np) / range_np) * 200.0 - 100.0 : 0.0
+
+// 5. Normalised delta in [−100, +100]
+highest_d  = ta.highest(delta, lookback)
+lowest_d   = ta.lowest(delta,  lookback)
+range_d    = highest_d - lowest_d
+norm_delta = range_d != 0 ? ((delta - lowest_d) / range_d) * 200.0 - 100.0 : 0.0
+
+// ─────────────────────────────────────────────────────────────
+// ░░  DIRECTION & STRENGTH LABELS
+// ─────────────────────────────────────────────────────────────
+dir_label(val) =>
+    val > 0 ? "BULLISH" : (val < 0 ? "BEARISH" : "NEUTRAL")
+
+strength_label(norm) =>
+    abs_n = math.abs(norm)
+    abs_n >= 75 ? "STRONG" : (abs_n >= 40 ? "MODERATE" : (abs_n >= 15 ? "WEAK" : "NEUTRAL"))
+
+// ─────────────────────────────────────────────────────────────
+// ░░  COLOURS
+// ─────────────────────────────────────────────────────────────
+C_BULL       = color.new(color.rgb(74, 222, 128), 0)   // green
+C_BULL_AREA  = color.new(color.rgb(74, 222, 128), 80)
+C_BEAR       = color.new(color.rgb(248, 113, 113), 0)  // red
+C_BEAR_AREA  = color.new(color.rgb(248, 113, 113), 80)
+C_NEUTRAL    = color.new(color.rgb(148, 163, 184), 0)  // slate
+C_ZERO_LINE  = color.new(color.rgb(255, 255, 255), 70)
+C_DELTA_POS  = color.new(color.rgb(96, 165, 250), 0)   // blue
+C_DELTA_NEG  = color.new(color.rgb(251, 191, 36), 0)   // amber
+
+net_color   = norm_pct  > 0 ? C_BULL    : (norm_pct  < 0 ? C_BEAR    : C_NEUTRAL)
+delta_color = norm_delta > 0 ? C_DELTA_POS : (norm_delta < 0 ? C_DELTA_NEG : C_NEUTRAL)
+
+// ─────────────────────────────────────────────────────────────
+// ░░  PLOTS
+// ─────────────────────────────────────────────────────────────
+plot(norm_pct, title = "LF Net Position (Normalised)", color = net_color, linewidth = 2, style = plot.style_line)
+
+p_zero = plot(0, title = "Zero", color = color.new(color.white, 100), display = display.none)
+p_net  = plot(norm_pct, color = color.new(color.white, 100), display = display.none)
+fill(p_net, p_zero, color = show_history ? (norm_pct > 0 ? C_BULL_AREA : C_BEAR_AREA) : na)
+
+plot(norm_delta / 3, title = "LF Delta (Normalised, scaled)", color = delta_color, linewidth = 1, style = plot.style_histogram)
+
+hline(0,   "Zero",     color = C_ZERO_LINE,                linestyle = hline.style_solid,  linewidth = 1)
+hline(50,  "Moderate", color = color.new(color.green, 70), linestyle = hline.style_dashed, linewidth = 1)
+hline(-50, "Moderate", color = color.new(color.red,   70), linestyle = hline.style_dashed, linewidth = 1)
+hline(75,  "Strong",   color = color.new(color.green, 50), linestyle = hline.style_dotted, linewidth = 1)
+hline(-75, "Strong",   color = color.new(color.red,   50), linestyle = hline.style_dotted, linewidth = 1)
+
+// ─────────────────────────────────────────────────────────────
+// ░░  TABLE — Info Panel (top-right)
+// ─────────────────────────────────────────────────────────────
+var table info_table = table.new(
+     position     = position.top_right,
+     columns      = 2,
+     rows         = 9,
+     bgcolor      = color.new(color.rgb(15, 23, 42), 10),
+     border_color = color.new(color.rgb(99, 102, 241), 40),
+     border_width = 1,
+     frame_color  = color.new(color.rgb(99, 102, 241), 20),
+     frame_width  = 2
+ )
+
+f_cell(tbl, col, row, txt, txt_color, bg_color, sz) =>
+    table.cell(tbl, col, row, txt, text_color = txt_color, bgcolor = bg_color, text_size = sz, text_halign = text.align_center)
+
+if barstate.islast
+    f_cell(info_table, 0, 0, "COT — Leveraged Funds", color.rgb(165, 180, 252), color.new(color.rgb(30, 27, 75), 5), size.small)
+    f_cell(info_table, 1, 0, cot_root == "" ? "⚠ Unknown" : "Symbol: " + cot_root, color.rgb(148, 163, 184), color.new(color.rgb(30, 27, 75), 5), size.tiny)
+
+    f_cell(info_table, 0, 1, "─── Net Position ───", color.rgb(100, 116, 139), color.new(color.rgb(15, 23, 42), 20), size.tiny)
+    f_cell(info_table, 1, 1, "", color.white, color.new(color.rgb(15, 23, 42), 20), size.tiny)
+
+    net_dir  = dir_label(net_pct)
+    net_strg = strength_label(norm_pct)
+    net_dir_color = net_pct > 0 ? C_BULL : (net_pct < 0 ? C_BEAR : C_NEUTRAL)
+    
+    f_cell(info_table, 0, 2, "Direction", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 2, net_dir, net_dir_color, color.new(color.rgb(15, 23, 42), 30), size.small)
+
+    f_cell(info_table, 0, 3, "Strength", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 3, net_strg, net_dir_color, color.new(color.rgb(15, 23, 42), 30), size.small)
+
+    net_raw_disp = na(net_raw) ? "N/A" : ((net_raw >= 0 ? "+" : "") + str.tostring(math.round(net_raw / 1000.0)) + "K")
+    f_cell(info_table, 0, 4, "Net Contracts", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 4, net_raw_disp, net_dir_color, color.new(color.rgb(15, 23, 42), 30), size.tiny)
+
+    f_cell(info_table, 0, 5, "─── Delta (WoW) ───", color.rgb(100, 116, 139), color.new(color.rgb(15, 23, 42), 20), size.tiny)
+    f_cell(info_table, 1, 5, "", color.white, color.new(color.rgb(15, 23, 42), 20), size.tiny)
+
+    d_dir   = dir_label(delta)
+    d_strg  = strength_label(norm_delta)
+    d_color = norm_delta > 0 ? C_DELTA_POS : (norm_delta < 0 ? C_DELTA_NEG : C_NEUTRAL)
+    
+    f_cell(info_table, 0, 6, "Delta Dir", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 6, d_dir, d_color, color.new(color.rgb(15, 23, 42), 30), size.small)
+
+    f_cell(info_table, 0, 7, "Delta Str", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 7, d_strg, d_color, color.new(color.rgb(15, 23, 42), 30), size.small)
+
+    d_val_str = na(delta) ? "N/A" : ((delta >= 0 ? "+" : "") + str.tostring(delta, "#.##") + "%")
+    f_cell(info_table, 0, 8, "Delta Value", color.rgb(148, 163, 184), color.new(color.rgb(15, 23, 42), 30), size.tiny)
+    f_cell(info_table, 1, 8, d_val_str, d_color, color.new(color.rgb(15, 23, 42), 30), size.tiny)
+
+// ─────────────────────────────────────────────────────────────
+// ░░  BACKGROUND
+// ─────────────────────────────────────────────────────────────
+bgcolor(barstate.islast and not na(net_pct) ? (net_pct > 0 ? color.new(color.rgb(74, 222, 128), 96) : color.new(color.rgb(248, 113, 113), 96)) : na, title = "Latest Bias Background")
+
+// ─────────────────────────────────────────────────────────────
+// ░░  ALERTS
+// ─────────────────────────────────────────────────────────────
+flipped_bull = net_pct > 0 and net_pct[1] <= 0
+flipped_bear = net_pct < 0 and net_pct[1] >= 0
+
+alertcondition(flipped_bull, title = "COT LF Flipped Bullish", message = "{{ticker}} — COT Leveraged Funds flipped BULLISH.")
+alertcondition(flipped_bear, title = "COT LF Flipped Bearish", message = "{{ticker}} — COT Leveraged Funds flipped BEARISH.")
+
+strong_bull_delta = norm_delta > 75
+strong_bear_delta = norm_delta < -75
+alertcondition(strong_bull_delta, title = "COT LF Strong Bullish Delta", message = "{{ticker}} — COT LF Delta showing STRONG bullish acceleration.")
+alertcondition(strong_bear_delta, title = "COT LF Strong Bearish Delta", message = "{{ticker}} — COT LF Delta showing STRONG bearish deceleration.")
