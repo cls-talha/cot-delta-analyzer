@@ -14,13 +14,14 @@ import json
 import os
 from typing import Optional
 
-from cot_parser import parse_report
 from cot_fetcher import fetch_current_week, fetch_archive_week, get_recent_release_dates
+from cot_parser import parse_report
 from cot_calculator import (
     compute_consolidated_table,
     compute_historical_table,
     compute_lf_detail_table,
     compute_lf_detail_historical_table,
+    calculate_lf_strength_index,
     CATEGORY_SHORT,
 )
 
@@ -348,6 +349,84 @@ def calculate_strength_pairs(df: pd.DataFrame, cat_short: str):
     return pairs
 
 
+def render_lf_strength_grid(df_lf_detail: pd.DataFrame):
+    """Render 28-currency pair LF Strength Index grid."""
+    if df_lf_detail.empty:
+        return
+        
+    lf_pairs = calculate_lf_strength_index(df_lf_detail)
+    if not lf_pairs:
+        return
+
+    grid_html = """
+    <div style="
+        background: #ffffff;
+        padding: 1.25rem 1.5rem;
+        border-radius: 12px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+    ">
+        <table style="
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-family: 'Inter', sans-serif;
+            text-align: center;
+        ">
+    """
+    
+    chunk_size = 7
+    for i in range(0, len(lf_pairs), chunk_size):
+        chunk = lf_pairs[i:i + chunk_size]
+        
+        # Pair Names Row
+        grid_html += '<tr>'
+        for pair_symbol, _ in chunk:
+            grid_html += f"""
+            <td style="
+                padding: 8px 6px 2px 6px;
+                font-weight: 700;
+                font-size: 0.95rem;
+                color: #1e1b4b;
+                border-bottom: none;
+            ">{pair_symbol}</td>
+            """
+        grid_html += '</tr>'
+        
+        # Percentage Values Row
+        grid_html += '<tr>'
+        for _, val in chunk:
+            color = "#16a34a" if val >= 0 else "#dc2626"
+            bg_color = "rgba(22, 163, 74, 0.1)" if val >= 0 else "rgba(220, 38, 38, 0.1)"
+            grid_html += f"""
+            <td style="
+                padding: 2px 6px 10px 6px;
+                font-weight: 600;
+                font-size: 0.88rem;
+                color: {color};
+            ">
+                <span style="
+                    background: {bg_color};
+                    padding: 3px 8px;
+                    border-radius: 6px;
+                    display: inline-block;
+                ">
+                    {val:+.2f}%
+                </span>
+            </td>
+            """
+        grid_html += '</tr>'
+        
+    grid_html += """
+        </table>
+    </div>
+    """
+    st.markdown(clean_html_string(grid_html), unsafe_allow_html=True)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Main App
 # ──────────────────────────────────────────────────────────────────────
@@ -535,102 +614,9 @@ def main():
         styled_lf_detail = format_lf_detail_dataframe(df_lf_detail)
         st.dataframe(styled_lf_detail, use_container_width=True)
 
-
-
-
-    st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
-
-    # ── Weekly Strength Pairs (based on Delta) ──
-    if not df_consolidated.empty:
-        st.markdown("### Weekly Strength Pairs (based on Delta)")
-        
-        # We display the pairs in 2 columns (LF and AM only)
-        p_col1, p_col2 = st.columns(2)
-        
-        categories_info = [
-            ("Leveraged Funds", "LF", p_col1, ""),
-            ("Asset Manager", "AM", p_col2, ""),
-        ]
-        
-        for cat_label, cat_short, col, icon in categories_info:
-            with col:
-                pairs = calculate_strength_pairs(df_consolidated, cat_short)
-                
-                # HTML card container
-                html_content = f"""
-                <div style="
-                    background: #ffffff;
-                    padding: 1.2rem;
-                    border-radius: 12px;
-                    border: 1px solid rgba(99, 102, 241, 0.25);
-                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-                    margin-bottom: 1rem;
-                ">
-                    <h4 style="
-                        color: #3730a3;
-                        margin-top: 0;
-                        margin-bottom: 15px;
-                        font-size: 1.05rem;
-                        font-weight: 700;
-                        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
-                        padding-bottom: 8px;
-                        display: flex;
-                        align-items: center;
-                        gap: 8px;
-                    ">
-                        {cat_label} ({cat_short})
-                    </h4>
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                """
-                
-                if pairs:
-                    ranks = ["S1", "S2", "S3", "S4"]
-                    for idx, (strong, weak, s_val, w_val) in enumerate(pairs):
-                        rank = ranks[idx] if idx < len(ranks) else str(idx + 1)
-                        diff = s_val - w_val
-                        s_name = clean_currency_name(strong)
-                        w_name = clean_currency_name(weak)
-                        
-                        html_content += f"""
-                        <div style="
-                            display: flex;
-                            justify-content: space-between;
-                            align-items: center;
-                            font-size: 0.9rem;
-                            padding: 4px 0;
-                            color: #1e1b4b;
-                        ">
-                            <span>
-                                <b style="color:#4338ca;">[{rank}]</b> <b>{s_name}</b> vs <b>{w_name}</b>
-                                <span style="color: #6b7280; font-size: 0.8rem; margin-left: 4px;">
-                                    ({s_val:+.2f}% / {w_val:+.2f}%)
-                                </span>
-                            </span>
-                            <span style="
-                                color: #16a34a;
-                                font-weight: 700;
-                                background: rgba(22, 163, 74, 0.1);
-                                padding: 2px 8px;
-                                border-radius: 6px;
-                                font-size: 0.85rem;
-                                border: 1px solid rgba(22, 163, 74, 0.25);
-                            ">
-                                +{diff:.2f}%
-                            </span>
-                        </div>
-                        """
-                else:
-                    html_content += """
-                    <div style="color: #64748b; font-size: 0.9rem; font-style: italic; text-align: center; padding: 10px 0;">
-                        No pairs available
-                    </div>
-                    """
-                
-                html_content += """
-                    </div>
-                </div>
-                """
-                st.markdown(clean_html_string(html_content), unsafe_allow_html=True)
+        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+        st.markdown("### Currency Pairs — LF Strength Index")
+        render_lf_strength_grid(df_lf_detail)
 
     st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
 
@@ -710,6 +696,10 @@ def main():
                     df_date_lf = df_lf_history.xs(d, level="Report Date")
                     styled_date_lf = format_lf_detail_dataframe(df_date_lf)
                     st.dataframe(styled_date_lf, use_container_width=True)
+                    
+                    st.markdown("#### Currency Pairs — LF Strength Index")
+                    render_lf_strength_grid(df_date_lf)
+
 
 
     # ── Footer ──

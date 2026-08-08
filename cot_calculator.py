@@ -330,3 +330,57 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
     return df[existing_cols]
 
 
+def calculate_lf_strength_index(df_lf_detail: pd.DataFrame) -> List[tuple]:
+    """
+    Calculate the LF Strength Index for all 28 currency pairs based on Leveraged Funds Net Percent LF ('Net Percent LF').
+    Returns a list of tuples: (pair_name, index_val), sorted descending by index_val.
+    
+    Formula matching Excel Terminal Sheet:
+    Strength Index = (Base_Net_Percent_LF - Quote_Net_Percent_LF) / 2
+    
+    Currencies involved: AUD, NZD, GBP, CAD, USD, CHF, JPY, EUR
+    """
+    if df_lf_detail.empty or "Net Percent LF" not in df_lf_detail.columns:
+        return []
+    
+    # Map currency raw name to clean ticker name
+    curr_map = {
+        "USD (DXY)": "USD",
+        "USD": "USD",
+        "EUR": "EUR",
+        "GBP": "GBP",
+        "CAD": "CAD",
+        "AUD": "AUD",
+        "NZD": "NZD",
+        "CHF": "CHF",
+        "JPY": "JPY"
+    }
+    
+    # Extract Net Percent LF values keyed by ticker name
+    lf_pcts = {}
+    for idx, row in df_lf_detail.iterrows():
+        ticker = curr_map.get(str(idx), str(idx).split()[0])
+        val = row["Net Percent LF"]
+        if pd.notna(val):
+            lf_pcts[ticker] = float(val)
+
+    # Standard Forex Pairs definition list (28 pairs)
+    pairs_def = [
+        ("AUD", "NZD"), ("GBP", "NZD"), ("AUD", "CAD"), ("GBP", "CAD"), ("USD", "CAD"), ("AUD", "CHF"), ("AUD", "JPY"),
+        ("GBP", "CHF"), ("GBP", "JPY"), ("EUR", "NZD"), ("EUR", "CAD"), ("USD", "CHF"), ("USD", "JPY"), ("AUD", "USD"),
+        ("GBP", "USD"), ("EUR", "CHF"), ("EUR", "JPY"), ("CHF", "JPY"), ("GBP", "AUD"), ("NZD", "CAD"), ("EUR", "USD"),
+        ("CAD", "CHF"), ("CAD", "JPY"), ("NZD", "CHF"), ("NZD", "JPY"), ("EUR", "GBP"), ("EUR", "AUD"), ("NZD", "USD"),
+    ]
+
+    results = []
+    for base, quote in pairs_def:
+        if base in lf_pcts and quote in lf_pcts:
+            strength_diff = (lf_pcts[base] - lf_pcts[quote]) / 2.0
+            pair_symbol = f"{base}{quote}"
+            results.append((pair_symbol, round(strength_diff, 2)))
+            
+    # Sort by strength_diff descending
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
+
+
