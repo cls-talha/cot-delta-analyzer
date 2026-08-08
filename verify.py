@@ -17,3 +17,4 @@ prev = parse_report(raw2)
 df_calc = compute_consolidated_table(current, prev)
 print("--- CALCULATED ---")
 print(df_calc[["LF Net Pos", "LF Net %", "LF Δ"]].to_string())
+

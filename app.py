@@ -22,6 +22,7 @@ from cot_calculator import (
     compute_lf_detail_table,
     compute_lf_detail_historical_table,
     calculate_lf_strength_index,
+    calculate_lf_composite_index,
     CATEGORY_SHORT,
 )
 
@@ -310,6 +311,50 @@ def clean_html_string(html: str) -> str:
     return "\n".join(line.strip() for line in html.strip().split("\n"))
 
 
+def render_copy_button(df: pd.DataFrame, key: str):
+    """Render a Copy Table to Clipboard button for a DataFrame."""
+    if df.empty:
+        return
+    tsv_data = df.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
+    btn_id = f"copy-btn-{key}"
+    js_func_name = f"copyTable_{key.replace('-', '_')}"
+    copy_html = f"""
+    <div style="text-align: right; margin-bottom: 6px;">
+        <button id="{btn_id}" onclick="{js_func_name}()" style="
+            background-color: #6366f1;
+            color: white;
+            border: none;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        ">
+            Copy Table to Clipboard
+        </button>
+    </div>
+    <script>
+    function {js_func_name}() {{
+        const text = `{tsv_data}`;
+        navigator.clipboard.writeText(text).then(() => {{
+            const btn = document.getElementById('{btn_id}');
+            btn.innerText = 'Copied!';
+            btn.style.backgroundColor = '#16a34a';
+            setTimeout(() => {{
+                btn.innerText = 'Copy Table to Clipboard';
+                btn.style.backgroundColor = '#6366f1';
+            }}, 2000);
+        }}).catch(err => {{
+            console.error('Failed to copy: ', err);
+        }});
+    }}
+    </script>
+    """
+    st.components.v1.html(copy_html, height=42)
+
+
 def clean_currency_name(name: str) -> str:
     """Clean currency names for pairs display (e.g. 'USD (DXY)' -> 'USD')."""
     return name.split(" ")[0]
@@ -350,7 +395,7 @@ def calculate_strength_pairs(df: pd.DataFrame, cat_short: str):
 
 
 def render_lf_strength_grid(df_lf_detail: pd.DataFrame):
-    """Render 28-currency pair LF Strength Index grid."""
+    """Render 28-currency pair LF Strength Index grid with dynamic gradient styling."""
     if df_lf_detail.empty:
         return
         
@@ -396,23 +441,30 @@ def render_lf_strength_grid(df_lf_detail: pd.DataFrame):
             """
         grid_html += '</tr>'
         
-        # Percentage Values Row
+        # Percentage Values Row with dynamic gradient & black font color
         grid_html += '<tr>'
         for _, val in chunk:
-            color = "#16a34a" if val >= 0 else "#dc2626"
-            bg_color = "rgba(22, 163, 74, 0.1)" if val >= 0 else "rgba(220, 38, 38, 0.1)"
+            abs_ratio = min(abs(val) / 50.0, 1.0)
+            alpha = 0.15 + (abs_ratio * 0.45)
+            if val >= 0:
+                bg_color = f"rgba(34, 197, 94, {alpha:.2f})"
+            else:
+                bg_color = f"rgba(239, 68, 68, {alpha:.2f})"
+
             grid_html += f"""
             <td style="
                 padding: 2px 6px 10px 6px;
                 font-weight: 600;
                 font-size: 0.88rem;
-                color: {color};
+                color: #000000;
             ">
                 <span style="
                     background: {bg_color};
-                    padding: 3px 8px;
+                    color: #000000;
+                    padding: 4px 10px;
                     border-radius: 6px;
                     display: inline-block;
+                    min-width: 55px;
                 ">
                     {val:+.2f}%
                 </span>
@@ -425,6 +477,263 @@ def render_lf_strength_grid(df_lf_detail: pd.DataFrame):
     </div>
     """
     st.markdown(clean_html_string(grid_html), unsafe_allow_html=True)
+
+
+
+def get_score_gradient_style(val: float, is_pair: bool = False):
+    """
+    Generate dynamic green/red gradient background styling with BLACK font color based on score magnitude.
+    - Positive scores: light green to dark green background
+    - Negative scores: light red to dark red (or low currency scores 0 to 50) background
+    """
+    if pd.isna(val) or val is None:
+        return "color: #000000;"
+
+    if is_pair:
+        abs_ratio = min(abs(val) / 60.0, 1.0)
+        alpha = 0.15 + (abs_ratio * 0.45)
+        
+        if val >= 0:
+            bg_color = f"rgba(34, 197, 94, {alpha:.2f})"
+        else:
+            bg_color = f"rgba(239, 68, 68, {alpha:.2f})"
+    else:
+        diff = val - 50.0
+        abs_ratio = min(abs(diff) / 50.0, 1.0)
+        alpha = 0.15 + (abs_ratio * 0.45)
+
+        if val >= 50:
+            bg_color = f"rgba(34, 197, 94, {alpha:.2f})"
+        else:
+            bg_color = f"rgba(239, 68, 68, {alpha:.2f})"
+
+    return f"color: #000000; background-color: {bg_color}; font-weight: 600;"
+
+
+def render_currency_composite_scores(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"):
+    """Render Currency Level Component & Composite Scores table."""
+    if df_lf_detail.empty:
+        return
+
+    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail)
+    if curr_df.empty:
+        return
+
+    st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+    header_col, copy_col = st.columns([7, 3])
+    with header_col:
+        st.markdown("### Currency Level Component & Composite Scores")
+    with copy_col:
+        render_copy_button(curr_df.set_index("Currency"), f"comp-scores-{key_suffix}")
+    
+    # Format Currency Table - apply color coding ONLY to "Composite Score"
+    def style_currency_table(df):
+        style_df = pd.DataFrame('', index=df.index, columns=df.columns)
+        if "Composite Score" in df.columns:
+            style_df["Composite Score"] = df["Composite Score"].apply(lambda v: get_score_gradient_style(v, is_pair=False))
+        return style_df
+
+    curr_styled = curr_df.style.format({
+        "LF Strength": "{:.2f}",
+        "LF Delta": "{:.2f}",
+        "LF OI Momentum": "{:.2f}",
+        "Composite Score": "{:.2f}",
+    }).apply(style_currency_table, axis=None).set_properties(**{
+        "text-align": "center",
+        "font-size": "0.85rem",
+    })
+    st.dataframe(curr_styled, use_container_width=True)
+
+
+def render_lf_strength_grid(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"):
+    """Render 28-currency pair LF Strength Index grid with dynamic gradient styling."""
+    if df_lf_detail.empty:
+        return
+        
+    lf_pairs = calculate_lf_strength_index(df_lf_detail)
+    if not lf_pairs:
+        return
+
+    st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+    header_col, copy_col = st.columns([7, 3])
+    with header_col:
+        st.markdown("### Currency Pairs — LF Strength Index")
+    with copy_col:
+        df_pairs = pd.DataFrame(lf_pairs, columns=["Pair", "LF Strength Index"]).set_index("Pair")
+        render_copy_button(df_pairs, f"lf-strength-{key_suffix}")
+
+    grid_html = """
+    <div style="
+        background: #ffffff;
+        padding: 1.25rem 1.5rem;
+        border-radius: 12px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+    ">
+        <table style="
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-family: 'Inter', sans-serif;
+            text-align: center;
+        ">
+    """
+    
+    chunk_size = 7
+    for i in range(0, len(lf_pairs), chunk_size):
+        chunk = lf_pairs[i:i + chunk_size]
+        
+        # Pair Names Row
+        grid_html += '<tr>'
+        for pair_symbol, _ in chunk:
+            grid_html += f"""
+            <td style="
+                padding: 8px 6px 2px 6px;
+                font-weight: 700;
+                font-size: 0.95rem;
+                color: #1e1b4b;
+                border-bottom: none;
+            ">{pair_symbol}</td>
+            """
+        grid_html += '</tr>'
+        
+        # Percentage Values Row with dynamic gradient & black font color
+        grid_html += '<tr>'
+        for _, val in chunk:
+            abs_ratio = min(abs(val) / 50.0, 1.0)
+            alpha = 0.15 + (abs_ratio * 0.45)
+            if val >= 0:
+                bg_color = f"rgba(34, 197, 94, {alpha:.2f})"
+            else:
+                bg_color = f"rgba(239, 68, 68, {alpha:.2f})"
+
+            grid_html += f"""
+            <td style="
+                padding: 2px 6px 10px 6px;
+                font-weight: 600;
+                font-size: 0.88rem;
+                color: #000000;
+            ">
+                <span style="
+                    background: {bg_color};
+                    color: #000000;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    display: inline-block;
+                    min-width: 55px;
+                ">
+                    {val:+.2f}%
+                </span>
+            </td>
+            """
+        grid_html += '</tr>'
+        
+    grid_html += """
+        </table>
+    </div>
+    """
+    st.markdown(clean_html_string(grid_html), unsafe_allow_html=True)
+
+
+def render_lf_composite_strength_grid(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"):
+    """Render Currency Pairs — LF Composite Strength Index table."""
+    if df_lf_detail.empty:
+        return
+
+    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail)
+    if not composite_pairs:
+        return
+
+    st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+    header_col, copy_col = st.columns([7, 3])
+    with header_col:
+        st.markdown("### Currency Pairs — LF Composite Strength Index")
+    with copy_col:
+        df_comp_pairs = pd.DataFrame(composite_pairs, columns=["Pair", "Composite Strength Score"]).set_index("Pair")
+        render_copy_button(df_comp_pairs, f"lf-comp-{key_suffix}")
+
+    grid_html = """
+    <div style="
+        background: #ffffff;
+        padding: 1.25rem 1.5rem;
+        border-radius: 12px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+    ">
+        <table style="
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-family: 'Inter', sans-serif;
+            text-align: center;
+        ">
+    """
+
+    chunk_size = 7
+    for i in range(0, len(composite_pairs), chunk_size):
+        chunk = composite_pairs[i:i + chunk_size]
+
+        # Pair Names Row
+        grid_html += '<tr>'
+        for pair_symbol, _ in chunk:
+            grid_html += f"""
+            <td style="
+                padding: 8px 6px 2px 6px;
+                font-weight: 700;
+                font-size: 0.95rem;
+                color: #1e1b4b;
+                border-bottom: none;
+            ">{pair_symbol}</td>
+            """
+        grid_html += '</tr>'
+
+        # Score Values Row with dynamic gradient and BLACK font color
+        grid_html += '<tr>'
+        for _, val in chunk:
+            abs_ratio = min(abs(val) / 60.0, 1.0)
+            alpha = 0.15 + (abs_ratio * 0.45)
+            if val >= 0:
+                bg_color = f"rgba(34, 197, 94, {alpha:.2f})"
+            else:
+                bg_color = f"rgba(239, 68, 68, {alpha:.2f})"
+
+            grid_html += f"""
+            <td style="
+                padding: 2px 6px 10px 6px;
+                font-weight: 600;
+                font-size: 0.88rem;
+                color: #000000;
+            ">
+                <span style="
+                    background: {bg_color};
+                    color: #000000;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    display: inline-block;
+                    min-width: 55px;
+                ">
+                    {val:+.2f}
+                </span>
+            </td>
+            """
+        grid_html += '</tr>'
+
+    grid_html += """
+        </table>
+    </div>
+    """
+    st.markdown(clean_html_string(grid_html), unsafe_allow_html=True)
+
+
+
+
+
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -614,9 +923,9 @@ def main():
         styled_lf_detail = format_lf_detail_dataframe(df_lf_detail)
         st.dataframe(styled_lf_detail, use_container_width=True)
 
-        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
-        st.markdown("### Currency Pairs — LF Strength Index")
-        render_lf_strength_grid(df_lf_detail)
+        render_currency_composite_scores(df_lf_detail, key_suffix="curr")
+        render_lf_strength_grid(df_lf_detail, key_suffix="curr")
+        render_lf_composite_strength_grid(df_lf_detail, key_suffix="curr")
 
     st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
 
@@ -685,20 +994,35 @@ def main():
         dates = df_history.index.get_level_values("Report Date").unique()
         
         for idx, d in enumerate(dates):
+            date_key = str(d).replace("-", "").replace(" ", "_")
             with st.expander(f"Report Date: {d}", expanded=(idx == 0)):
                 # Extract cross-section for this date
                 df_date = df_history.xs(d, level="Report Date")
+                
+                hist_header_col, hist_copy_col = st.columns([7, 3])
+                with hist_header_col:
+                    st.markdown("#### Overview")
+                with hist_copy_col:
+                    render_copy_button(df_date, f"hist-overview-{date_key}")
+
                 styled_history = format_historical_dataframe(df_date)
                 st.dataframe(styled_history, use_container_width=True)
 
                 if not df_lf_history.empty and d in df_lf_history.index.get_level_values("Report Date"):
-                    st.markdown("#### Leveraged Funds Breakdown")
                     df_date_lf = df_lf_history.xs(d, level="Report Date")
+                    
+                    lf_hist_header_col, lf_hist_copy_col = st.columns([7, 3])
+                    with lf_hist_header_col:
+                        st.markdown("#### Leveraged Funds Breakdown")
+                    with lf_hist_copy_col:
+                        render_copy_button(df_date_lf, f"hist-lf-{date_key}")
+
                     styled_date_lf = format_lf_detail_dataframe(df_date_lf)
                     st.dataframe(styled_date_lf, use_container_width=True)
                     
-                    st.markdown("#### Currency Pairs — LF Strength Index")
-                    render_lf_strength_grid(df_date_lf)
+                    render_currency_composite_scores(df_date_lf, key_suffix=f"hist-{date_key}")
+                    render_lf_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")
+                    render_lf_composite_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")
 
 
 

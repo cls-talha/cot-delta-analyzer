@@ -384,3 +384,140 @@ def calculate_lf_strength_index(df_lf_detail: pd.DataFrame) -> List[tuple]:
     return results
 
 
+def calculate_lf_composite_index(
+    df_lf_detail: pd.DataFrame,
+    weights: dict = {"strength": 0.60, "delta": 0.25, "oi_momentum": 0.15}
+):
+    """
+    Calculate LF Composite Strength Index for currencies and currency pairs.
+    
+    Weights:
+    - LF Strength: 0.60 (Net Percent LF percentile)
+    - LF Delta / Momentum: 0.25 (Net % LF Δ percentile)
+    - LF OI Momentum: 0.15 (Δ LF Open Interest / Previous LF Open Interest * 100 percentile)
+    
+    Percentile methodology:
+    percentile = rank / (N - 1) * 100
+    where N = number of valid currencies (strongest = 100, weakest = 0, average rank for ties).
+    If N == 1, rank/percentile is 100.
+    
+    Returns:
+    - curr_df: DataFrame with columns [Currency, LF Strength, LF Delta, LF OI Momentum, Composite Score]
+    - pairs_list: List of tuples (pair_symbol, pair_score) sorted descending by pair_score.
+    """
+    if df_lf_detail.empty:
+        return pd.DataFrame(), []
+
+    curr_map = {
+        "USD (DXY)": "USD",
+        "USD": "USD",
+        "EUR": "EUR",
+        "GBP": "GBP",
+        "CAD": "CAD",
+        "AUD": "AUD",
+        "NZD": "NZD",
+        "CHF": "CHF",
+        "JPY": "JPY"
+    }
+
+    raw_rows = []
+    for idx, row in df_lf_detail.iterrows():
+        ticker = curr_map.get(str(idx), str(idx).split()[0])
+        
+        net_pct_lf = row.get("Net Percent LF", None)
+        net_pct_lf_delta = row.get("Net % LF Δ", None)
+        
+        total_lf_oi = row.get("Total LF Open Interest", None)
+        delta_lf_oi = row.get("Δ LF Open Interest", None)
+        
+        oi_momentum_pct = None
+        if pd.notna(total_lf_oi) and pd.notna(delta_lf_oi):
+            prev_lf_oi = float(total_lf_oi) - float(delta_lf_oi)
+            if prev_lf_oi > 0:
+                oi_momentum_pct = (float(delta_lf_oi) / prev_lf_oi) * 100.0
+
+        raw_rows.append({
+            "Currency": ticker,
+            "net_pct_lf": float(net_pct_lf) if pd.notna(net_pct_lf) else None,
+            "net_pct_lf_delta": float(net_pct_lf_delta) if pd.notna(net_pct_lf_delta) else None,
+            "oi_momentum_pct": oi_momentum_pct,
+        })
+
+    df_comp = pd.DataFrame(raw_rows)
+
+    def calc_percentile(series: pd.Series) -> pd.Series:
+        valid_s = series.dropna()
+        N = len(valid_s)
+        if N == 0:
+            return pd.Series(index=series.index, dtype=float)
+        if N == 1:
+            return pd.Series(100.0, index=valid_s.index).reindex(series.index)
+        
+        ranks = valid_s.rank(ascending=True, method="average") - 1.0
+        percentiles = (ranks / (N - 1)) * 100.0
+        return percentiles.reindex(series.index)
+
+    df_comp["lf_strength_pct"] = calc_percentile(df_comp["net_pct_lf"])
+    df_comp["lf_delta_pct"] = calc_percentile(df_comp["net_pct_lf_delta"])
+    df_comp["lf_oi_mom_pct"] = calc_percentile(df_comp["oi_momentum_pct"])
+
+    w_str = weights.get("strength", 0.60)
+    w_del = weights.get("delta", 0.25)
+    w_oi = weights.get("oi_momentum", 0.15)
+
+    composite_scores = []
+    for _, r in df_comp.iterrows():
+        s = r["lf_strength_pct"]
+        d = r["lf_delta_pct"]
+        o = r["lf_oi_mom_pct"]
+        
+        # Calculate score using available valid component percentiles
+        w_sum = 0.0
+        val_sum = 0.0
+        if pd.notna(s):
+            w_sum += w_str
+            val_sum += w_str * s
+        if pd.notna(d):
+            w_sum += w_del
+            val_sum += w_del * d
+        if pd.notna(o):
+            w_sum += w_oi
+            val_sum += w_oi * o
+
+        score = (val_sum / w_sum) if w_sum > 0 else None
+        composite_scores.append(score)
+
+    df_comp["Composite Score"] = composite_scores
+
+    # Build display dataframe
+    df_display = pd.DataFrame({
+        "Currency": df_comp["Currency"],
+        "LF Strength": df_comp["lf_strength_pct"].round(2),
+        "LF Delta": df_comp["lf_delta_pct"].round(2),
+        "LF OI Momentum": df_comp["lf_oi_mom_pct"].round(2),
+        "Composite Score": df_comp["Composite Score"].round(2),
+    }).sort_values(by="Composite Score", ascending=False).reset_index(drop=True)
+
+    # Calculate 28 Currency Pairs Composite Strength
+    scores_dict = dict(zip(df_display["Currency"], df_display["Composite Score"]))
+
+    pairs_def = [
+        ("AUD", "NZD"), ("GBP", "NZD"), ("AUD", "CAD"), ("GBP", "CAD"), ("USD", "CAD"), ("AUD", "CHF"), ("AUD", "JPY"),
+        ("GBP", "CHF"), ("GBP", "JPY"), ("EUR", "NZD"), ("EUR", "CAD"), ("USD", "CHF"), ("USD", "JPY"), ("AUD", "USD"),
+        ("GBP", "USD"), ("EUR", "CHF"), ("EUR", "JPY"), ("CHF", "JPY"), ("GBP", "AUD"), ("NZD", "CAD"), ("EUR", "USD"),
+        ("CAD", "CHF"), ("CAD", "JPY"), ("NZD", "CHF"), ("NZD", "JPY"), ("EUR", "GBP"), ("EUR", "AUD"), ("NZD", "USD"),
+    ]
+
+    pairs_results = []
+    for base, quote in pairs_def:
+        if base in scores_dict and quote in scores_dict and pd.notna(scores_dict[base]) and pd.notna(scores_dict[quote]):
+            p_score = scores_dict[base] - scores_dict[quote]
+            pair_symbol = f"{base}{quote}"
+            pairs_results.append((pair_symbol, round(p_score, 2)))
+
+    pairs_results.sort(key=lambda x: x[1], reverse=True)
+
+    return df_display, pairs_results
+
+
+
