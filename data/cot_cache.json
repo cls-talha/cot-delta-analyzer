@@ -3873,5 +3873,130 @@
         }
       }
     }
+  },
+  "2026-08-07": {
+    "report_date": "August 4, 2026",
+    "instruments": {
+      "CAD": {
+        "open_interest": 365083.0,
+        "dealer": {
+          "long": 231493.0,
+          "short": 30673.0
+        },
+        "asset_manager": {
+          "long": 35201.0,
+          "short": 136515.0
+        },
+        "leveraged_funds": {
+          "long": 24786.0,
+          "short": 126534.0
+        }
+      },
+      "CHF": {
+        "open_interest": 109573.0,
+        "dealer": {
+          "long": 72581.0,
+          "short": 8817.0
+        },
+        "asset_manager": {
+          "long": 4571.0,
+          "short": 44338.0
+        },
+        "leveraged_funds": {
+          "long": 11408.0,
+          "short": 21492.0
+        }
+      },
+      "GBP": {
+        "open_interest": 246577.0,
+        "dealer": {
+          "long": 127348.0,
+          "short": 35337.0
+        },
+        "asset_manager": {
+          "long": 12228.0,
+          "short": 138042.0
+        },
+        "leveraged_funds": {
+          "long": 67175.0,
+          "short": 29001.0
+        }
+      },
+      "JPY": {
+        "open_interest": 419393.0,
+        "dealer": {
+          "long": 112779.0,
+          "short": 81356.0
+        },
+        "asset_manager": {
+          "long": 72815.0,
+          "short": 115237.0
+        },
+        "leveraged_funds": {
+          "long": 75758.0,
+          "short": 136583.0
+        }
+      },
+      "EUR": {
+        "open_interest": 799909.0,
+        "dealer": {
+          "long": 51250.0,
+          "short": 255728.0
+        },
+        "asset_manager": {
+          "long": 445903.0,
+          "short": 226641.0
+        },
+        "leveraged_funds": {
+          "long": 95389.0,
+          "short": 147594.0
+        }
+      },
+      "AUD": {
+        "open_interest": 240482.0,
+        "dealer": {
+          "long": 61335.0,
+          "short": 91656.0
+        },
+        "asset_manager": {
+          "long": 68767.0,
+          "short": 102986.0
+        },
+        "leveraged_funds": {
+          "long": 64639.0,
+          "short": 24002.0
+        }
+      },
+      "NZD": {
+        "open_interest": 101908.0,
+        "dealer": {
+          "long": 84946.0,
+          "short": 19456.0
+        },
+        "asset_manager": {
+          "long": 7090.0,
+          "short": 41067.0
+        },
+        "leveraged_funds": {
+          "long": 3647.0,
+          "short": 33937.0
+        }
+      },
+      "USD (DXY)": {
+        "open_interest": 52154.0,
+        "dealer": {
+          "long": 5756.0,
+          "short": 32826.0
+        },
+        "asset_manager": {
+          "long": 20071.0,
+          "short": 1976.0
+        },
+        "leveraged_funds": {
+          "long": 16271.0,
+          "short": 12422.0
+        }
+      }
+    }
   }
 }

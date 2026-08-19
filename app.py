@@ -510,12 +510,12 @@ def get_score_gradient_style(val: float, is_pair: bool = False):
     return f"color: #000000; background-color: {bg_color}; font-weight: 600;"
 
 
-def render_currency_composite_scores(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"):
+def render_currency_composite_scores(df_lf_detail: pd.DataFrame, weights: dict, key_suffix: str = "curr"):
     """Render Currency Level Component & Composite Scores table."""
     if df_lf_detail.empty:
         return
 
-    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail)
+    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail, weights=weights)
     if curr_df.empty:
         return
 
@@ -638,12 +638,12 @@ def render_lf_strength_grid(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"
     st.markdown(clean_html_string(grid_html), unsafe_allow_html=True)
 
 
-def render_lf_composite_strength_grid(df_lf_detail: pd.DataFrame, key_suffix: str = "curr"):
+def render_lf_composite_strength_grid(df_lf_detail: pd.DataFrame, weights: dict, key_suffix: str = "curr"):
     """Render Currency Pairs — LF Composite Strength Index table."""
     if df_lf_detail.empty:
         return
 
-    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail)
+    curr_df, composite_pairs = calculate_lf_composite_index(df_lf_detail, weights=weights)
     if not composite_pairs:
         return
 
@@ -740,6 +740,17 @@ def render_lf_composite_strength_grid(df_lf_detail: pd.DataFrame, key_suffix: st
 # Main App
 # ──────────────────────────────────────────────────────────────────────
 def main():
+    # Load LF Strength Index weights dynamically from json file
+    try:
+        with open("weights.json", "r") as f:
+            lf_weights = json.load(f)
+    except Exception:
+        lf_weights = {
+            "strength": 0.60,
+            "delta": 0.25,
+            "oi_momentum": 0.15
+        }
+
     # ── Header ──
     st.markdown("""
     <div class="main-header">
@@ -875,6 +886,10 @@ def main():
     else:
         st.warning("No data found for current week.")
 
+    # Pre-compute historical tables for the visualizations and history section
+    df_history = compute_historical_table(reports_data)
+    df_lf_history = compute_lf_detail_historical_table(reports_data)
+
     # ── Leveraged Funds Detail Table (Current Week) ──
     df_lf_detail = compute_lf_detail_table(current_data, previous_data)
     if not df_lf_detail.empty:
@@ -923,70 +938,115 @@ def main():
         styled_lf_detail = format_lf_detail_dataframe(df_lf_detail)
         st.dataframe(styled_lf_detail, use_container_width=True)
 
-        render_currency_composite_scores(df_lf_detail, key_suffix="curr")
+
+        # ── Historical + Current Visualization ──
+        if not df_history.empty and not df_lf_history.empty:
+            st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
+            st.markdown("### Position Visualization")
+            
+            # Get unique currencies for dropdowns
+            available_currencies = df_history.index.get_level_values("Currency").unique().tolist()
+            
+            # We need the report dates
+            available_dates = df_history.index.get_level_values("Report Date").unique().tolist()
+            
+            num_weeks = st.selectbox("Historical Weeks to View", options=[4, 7, 12, 24, 52], index=1)
+            chart_dates = available_dates[:num_weeks]
+            
+            col_left, col_right = st.columns(2)
+            
+            with col_left:
+                curr_left = st.selectbox("Select Currency 1 (Left)", options=available_currencies, index=0, key="curr_left")
+                
+                if curr_left:
+                    st.markdown(f"**{curr_left} - LF & AM Positioning (Last {len(chart_dates)} Weeks)**")
+                    # Filter data for curr_left and chart_dates
+                    df_hist_left = df_history.loc[df_history.index.get_level_values("Currency") == curr_left]
+                    df_hist_left = df_hist_left[df_hist_left.index.get_level_values("Report Date").isin(chart_dates)].reset_index()
+                    
+                    df_lf_hist_left = df_lf_history.loc[df_lf_history.index.get_level_values("Currency") == curr_left]
+                    df_lf_hist_left = df_lf_hist_left[df_lf_hist_left.index.get_level_values("Report Date").isin(chart_dates)].reset_index()
+                    
+                    # Reverse to plot chronological order (oldest to newest)
+                    df_hist_left = df_hist_left.iloc[::-1]
+                    df_lf_hist_left = df_lf_hist_left.iloc[::-1]
+                    
+                    # LF Chart
+                    lf_melt_left = df_lf_hist_left.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["Net Percent LF", "Net % LF Δ"],
+                        var_name="Metric",
+                        value_name="Value"
+                    )
+                    fig_lf_left = px.bar(lf_melt_left, x="Report Date", y="Value", color="Metric", barmode="group",
+                                         color_discrete_sequence=["#1a80bb", "#ea801c"], template="plotly_dark",
+                                         title="Leveraged Funds (LF)")
+                    fig_lf_left.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_lf_left, use_container_width=True)
+                    
+                    # AM Chart
+                    am_melt_left = df_hist_left.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["AM Net %", "AM Δ"],
+                        var_name="Metric",
+                        value_name="Value"
+                    )
+                    am_melt_left["Metric"] = am_melt_left["Metric"].replace({"AM Net %": "Net Percent AM", "AM Δ": "Net % AM Δ"})
+                    fig_am_left = px.bar(am_melt_left, x="Report Date", y="Value", color="Metric", barmode="group",
+                                         color_discrete_sequence=["#298c8c", "#f1a226"], template="plotly_dark",
+                                         title="Asset Manager (AM)")
+                    fig_am_left.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_am_left, use_container_width=True)
+                    
+            with col_right:
+                curr_right = st.selectbox("Select Currency 2 (Right)", options=available_currencies, index=min(1, len(available_currencies)-1), key="curr_right")
+                
+                if curr_right:
+                    st.markdown(f"**{curr_right} - LF & AM Positioning (Last {len(chart_dates)} Weeks)**")
+                    # Filter data for curr_right and chart_dates
+                    df_hist_right = df_history.loc[df_history.index.get_level_values("Currency") == curr_right]
+                    df_hist_right = df_hist_right[df_hist_right.index.get_level_values("Report Date").isin(chart_dates)].reset_index()
+                    
+                    df_lf_hist_right = df_lf_history.loc[df_lf_history.index.get_level_values("Currency") == curr_right]
+                    df_lf_hist_right = df_lf_hist_right[df_lf_hist_right.index.get_level_values("Report Date").isin(chart_dates)].reset_index()
+                    
+                    # Reverse to plot chronological order (oldest to newest)
+                    df_hist_right = df_hist_right.iloc[::-1]
+                    df_lf_hist_right = df_lf_hist_right.iloc[::-1]
+                    
+                    # LF Chart
+                    lf_melt_right = df_lf_hist_right.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["Net Percent LF", "Net % LF Δ"],
+                        var_name="Metric",
+                        value_name="Value"
+                    )
+                    fig_lf_right = px.bar(lf_melt_right, x="Report Date", y="Value", color="Metric", barmode="group",
+                                          color_discrete_sequence=["#1a80bb", "#ea801c"], template="plotly_dark",
+                                          title="Leveraged Funds (LF)")
+                    fig_lf_right.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_lf_right, use_container_width=True)
+                    
+                    # AM Chart
+                    am_melt_right = df_hist_right.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["AM Net %", "AM Δ"],
+                        var_name="Metric",
+                        value_name="Value"
+                    )
+                    am_melt_right["Metric"] = am_melt_right["Metric"].replace({"AM Net %": "Net Percent AM", "AM Δ": "Net % AM Δ"})
+                    fig_am_right = px.bar(am_melt_right, x="Report Date", y="Value", color="Metric", barmode="group",
+                                          color_discrete_sequence=["#298c8c", "#f1a226"], template="plotly_dark",
+                                          title="Asset Manager (AM)")
+                    fig_am_right.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_am_right, use_container_width=True)
+
         render_lf_strength_grid(df_lf_detail, key_suffix="curr")
-        render_lf_composite_strength_grid(df_lf_detail, key_suffix="curr")
+        render_lf_composite_strength_grid(df_lf_detail, weights=lf_weights, key_suffix="curr")
+        render_currency_composite_scores(df_lf_detail, weights=lf_weights, key_suffix="curr")
 
-    st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
-
-    # ── Plotly Graphs ──
-    if not df_consolidated.empty and previous_data:
-        st.markdown("### Weekly Delta Visualization (%)")
-        
-        # Prepare data for plotting
-        plot_df = df_consolidated.reset_index()
-        delta_cols = [col for col in plot_df.columns if "Δ" in col]
-        
-        if delta_cols:
-            # Melt the dataframe so we have Currency, Category, Delta
-            melted = plot_df.melt(
-                id_vars=["Currency"],
-                value_vars=delta_cols,
-                var_name="Category",
-                value_name="Delta (%)"
-            )
-            
-            # Clean category names (e.g., "LF Δ" -> "Leveraged Funds")
-            cat_map = {"LF Δ": "Leveraged Funds", "AM Δ": "Asset Manager", "DI Δ": "Dealers"}
-            melted["Category"] = melted["Category"].map(cat_map)
-            
-            fig = px.bar(
-                melted,
-                x="Currency",
-                y="Delta (%)",
-                color="Category",
-                barmode="group",
-                color_discrete_sequence=["#f43f5e", "#3b82f6", "#10b981"], # Distinct colors
-                template="plotly_dark"
-            )
-            
-            fig.update_layout(
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=20, r=20, t=30, b=20),
-                legend_title_text="",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                ),
-                xaxis_title="",
-                yaxis_title="Change in Net % (bps)",
-            )
-            
-            # Add horizontal zero line
-            fig.add_hline(y=0, line_width=1, line_color="rgba(255,255,255,0.2)")
-            
-            st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
-
-    # ── Historical Data (Last 3-4 Weeks) ──
+    # ── Historical Data (Last X Reports) ──
     st.markdown(f"### Historical Data (Last {len(reports_data)} Reports)")
-    df_history = compute_historical_table(reports_data)
-    df_lf_history = compute_lf_detail_historical_table(reports_data)
     
     if not df_history.empty:
         # df_history has a MultiIndex: ["Currency", "Report Date"]
@@ -1020,9 +1080,9 @@ def main():
                     styled_date_lf = format_lf_detail_dataframe(df_date_lf)
                     st.dataframe(styled_date_lf, use_container_width=True)
                     
-                    render_currency_composite_scores(df_date_lf, key_suffix=f"hist-{date_key}")
+                    render_currency_composite_scores(df_date_lf, weights=lf_weights, key_suffix=f"hist-{date_key}")
                     render_lf_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")
-                    render_lf_composite_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")
+                    render_lf_composite_strength_grid(df_date_lf, weights=lf_weights, key_suffix=f"hist-{date_key}")
 
 
 
