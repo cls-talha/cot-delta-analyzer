@@ -80,3 +80,67 @@ def get_archive_url(release_date: date) -> str:
         year=report_date.year,
         mmddyy=mmddyy,
     )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Contract Specifications & Approximate FX Rates
+# Used to convert contract counts → USD notional values (billions).
+#
+# contract_size: units of the underlying currency per 1 futures contract
+# fx_rate_to_usd: approximate exchange rate to convert 1 unit → USD
+#   - For XXX/USD pairs (EUR, GBP, AUD, NZD): rate is direct (e.g., 1 EUR = 1.158 USD)
+#   - For USD/XXX pairs (CAD, CHF, JPY): rate is 1/spot (e.g., 1 CAD = 1/1.391 USD)
+#   - For DXY: contract_size = 1000, value = 1000 × index level
+#
+# Update these rates periodically for more accurate dollar estimates.
+# ──────────────────────────────────────────────────────────────────────
+CONTRACT_SPECS = {
+    "EUR": {
+        "contract_size": 125_000,       # 125,000 EUR per contract
+        "fx_rate_to_usd": 1.158,        # 1 EUR ≈ 1.158 USD
+    },
+    "GBP": {
+        "contract_size": 62_500,        # 62,500 GBP per contract
+        "fx_rate_to_usd": 1.348,        # 1 GBP ≈ 1.348 USD
+    },
+    "CAD": {
+        "contract_size": 100_000,       # 100,000 CAD per contract
+        "fx_rate_to_usd": 1 / 1.391,   # 1 CAD ≈ 0.719 USD
+    },
+    "AUD": {
+        "contract_size": 100_000,       # 100,000 AUD per contract
+        "fx_rate_to_usd": 0.714,        # 1 AUD ≈ 0.714 USD
+    },
+    "NZD": {
+        "contract_size": 100_000,       # 100,000 NZD per contract
+        "fx_rate_to_usd": 0.584,        # 1 NZD ≈ 0.584 USD
+    },
+    "CHF": {
+        "contract_size": 125_000,       # 125,000 CHF per contract
+        "fx_rate_to_usd": 1 / 0.813,   # 1 CHF ≈ 1.230 USD
+    },
+    "JPY": {
+        "contract_size": 12_500_000,    # 12,500,000 JPY per contract
+        "fx_rate_to_usd": 1 / 159.0,   # 1 JPY ≈ 0.00629 USD
+    },
+    "USD (DXY)": {
+        "contract_size": 1_000,         # $1,000 × Index value
+        "fx_rate_to_usd": 99.5,         # DXY index level (~99.5)
+    },
+}
+
+
+def contracts_to_usd(currency_name: str, num_contracts: float) -> float:
+    """Convert a number of futures contracts to USD notional value.
+
+    Returns the value in raw USD (not billions).
+    """
+    spec = CONTRACT_SPECS.get(currency_name)
+    if spec is None:
+        return 0.0
+    return num_contracts * spec["contract_size"] * spec["fx_rate_to_usd"]
+
+
+def contracts_to_billions(currency_name: str, num_contracts: float) -> float:
+    """Convert a number of futures contracts to USD notional value in billions."""
+    return contracts_to_usd(currency_name, num_contracts) / 1_000_000_000

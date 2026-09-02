@@ -101,13 +101,16 @@ st.markdown("""
     color: #a5b4fc !important;
     font-weight: 600 !important;
     text-align: center !important;
-    padding: 0.6rem 0.8rem !important;
+    padding: 0.4rem 0.35rem !important;
     border-bottom: 2px solid rgba(99,102,241,0.3) !important;
+    font-size: 0.8rem !important;
+    white-space: nowrap !important;
 }
 .dataframe td {
     text-align: center !important;
-    padding: 0.5rem 0.8rem !important;
+    padding: 0.35rem 0.3rem !important;
     border-bottom: 1px solid rgba(255,255,255,0.04) !important;
+    white-space: nowrap !important;
 }
 .dataframe tr:hover td {
     background: rgba(99,102,241,0.1) !important;
@@ -209,15 +212,13 @@ def format_consolidated_dataframe(df: pd.DataFrame):
     delta_cols = []
     
     for col in df.columns:
-        if "Net Pos" in col:
-            format_dict[col] = "{:,.0f}"
-        elif "Net %" in col:
-            format_dict[col] = "{:.2f}%"
+        if "($B)" in col:
+            format_dict[col] = "${:,.2f}"
         elif "Δ" in col:
             format_dict[col] = "{:+.2f}%"
             delta_cols.append(col)
 
-    styled = df.style.format(format_dict, na_rep="—")
+    styled = df.style.format(format_dict, na_rep="\u2014")
 
     # Apply conditional coloring to delta columns
     if delta_cols:
@@ -229,7 +230,7 @@ def format_consolidated_dataframe(df: pd.DataFrame):
     # Style the rest
     styled = styled.set_properties(**{
         "text-align": "center",
-        "font-size": "0.85rem",
+        "font-size": "0.82rem",
     })
 
     return styled
@@ -271,7 +272,11 @@ def format_lf_detail_dataframe(df: pd.DataFrame):
     colored_cols = []
     
     for col in df.columns:
-        if "Δ" in col:
+        if "($B)" in col:
+            # Delta billion-dollar columns — always show sign
+            format_dict[col] = "${:+,.2f}"
+            colored_cols.append(col)
+        elif "Δ" in col:
             colored_cols.append(col)
             if "%" in col:
                 format_dict[col] = "{:+.2f}%"
@@ -288,9 +293,9 @@ def format_lf_detail_dataframe(df: pd.DataFrame):
         else:
             format_dict[col] = "{:,.0f}"
 
-    styled = df.style.format(format_dict, na_rep="—")
+    styled = df.style.format(format_dict, na_rep="\u2014")
 
-    # Apply conditional red/green coloring to Net Positions, Net Percent, Net Percent LF and all Delta columns
+    # Apply conditional red/green coloring to Net Positions, Net Percent, Net Percent LF, all Delta columns, and $B columns
     if colored_cols:
         if hasattr(styled, "map"):
             styled = styled.map(style_delta, subset=colored_cols)
@@ -299,7 +304,7 @@ def format_lf_detail_dataframe(df: pd.DataFrame):
 
     styled = styled.set_properties(**{
         "text-align": "center",
-        "font-size": "0.85rem",
+        "font-size": "0.82rem",
     })
     return styled
 
@@ -893,12 +898,18 @@ def main():
     # ── Leveraged Funds Detail Table (Current Week) ──
     df_lf_detail = compute_lf_detail_table(current_data, previous_data)
     if not df_lf_detail.empty:
+        lf_breakdown_cols = [
+            "Net Positions", "Net Percent", "Net Percent LF", "Net % LF Δ",
+            "Total Open Interest", "Total LF Open Interest", "Long Positions", "Short Positions"
+        ]
+        df_lf_breakdown = df_lf_detail[[c for c in lf_breakdown_cols if c in df_lf_detail.columns]]
+        
         st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
         lf_header_col, lf_copy_col = st.columns([7, 3])
         with lf_header_col:
             st.markdown("### Leveraged Funds Breakdown")
         with lf_copy_col:
-            tsv_lf_data = df_lf_detail.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
+            tsv_lf_data = df_lf_breakdown.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
             copy_lf_html = f"""
             <div style="text-align: right;">
                 <button id="copy-lf-btn" onclick="copyLfTableToClipboard()" style="
@@ -935,8 +946,60 @@ def main():
             """
             st.components.v1.html(copy_lf_html, height=45)
 
-        styled_lf_detail = format_lf_detail_dataframe(df_lf_detail)
+        styled_lf_detail = format_lf_detail_dataframe(df_lf_breakdown)
         st.dataframe(styled_lf_detail, use_container_width=True)
+
+        # ── COT Detailed Breakdown (Current Week) ──
+        detailed_cols = [
+            "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
+            "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)"
+        ]
+        df_detailed = df_lf_detail[[c for c in detailed_cols if c in df_lf_detail.columns]]
+        
+        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+        det_header_col, det_copy_col = st.columns([7, 3])
+        with det_header_col:
+            st.markdown("### COT Detailed Breakdown")
+        with det_copy_col:
+            tsv_det_data = df_detailed.to_csv(sep="\t", index=True).replace("`", "\\`").replace("$", "\\$")
+            copy_det_html = f"""
+            <div style="text-align: right;">
+                <button id="copy-det-btn" onclick="copyDetTableToClipboard()" style="
+                    background-color: #6366f1;
+                    color: white;
+                    border: none;
+                    padding: 0.4rem 0.8rem;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    width: 100%;
+                ">
+                    Copy Table to Clipboard
+                </button>
+            </div>
+            <script>
+            function copyDetTableToClipboard() {{
+                const text = `{tsv_det_data}`;
+                navigator.clipboard.writeText(text).then(() => {{
+                    const btn = document.getElementById('copy-det-btn');
+                    btn.innerText = 'Copied!';
+                    btn.style.backgroundColor = '#16a34a';
+                    setTimeout(() => {{
+                        btn.innerText = 'Copy Table to Clipboard';
+                        btn.style.backgroundColor = '#6366f1';
+                    }}, 2000);
+                }}).catch(err => {{
+                    console.error('Failed to copy: ', err);
+                }});
+            }}
+            </script>
+            """
+            st.components.v1.html(copy_det_html, height=45)
+
+        styled_detailed = format_lf_detail_dataframe(df_detailed)
+        st.dataframe(styled_detailed, use_container_width=True)
 
 
         # ── Historical + Current Visualization ──
@@ -1071,14 +1134,36 @@ def main():
                 if not df_lf_history.empty and d in df_lf_history.index.get_level_values("Report Date"):
                     df_date_lf = df_lf_history.xs(d, level="Report Date")
                     
+                    lf_breakdown_cols_hist = [
+                        "Net Positions", "Net Percent", "Net Percent LF", "Net % LF Δ",
+                        "Total Open Interest", "Total LF Open Interest", "Long Positions", "Short Positions"
+                    ]
+                    df_lf_breakdown_hist = df_date_lf[[c for c in lf_breakdown_cols_hist if c in df_date_lf.columns]]
+                    
                     lf_hist_header_col, lf_hist_copy_col = st.columns([7, 3])
                     with lf_hist_header_col:
                         st.markdown("#### Leveraged Funds Breakdown")
                     with lf_hist_copy_col:
-                        render_copy_button(df_date_lf, f"hist-lf-{date_key}")
+                        render_copy_button(df_lf_breakdown_hist, f"hist-lf-{date_key}")
 
-                    styled_date_lf = format_lf_detail_dataframe(df_date_lf)
+                    styled_date_lf = format_lf_detail_dataframe(df_lf_breakdown_hist)
                     st.dataframe(styled_date_lf, use_container_width=True)
+                    
+                    # ── Historical COT Detailed Breakdown ──
+                    detailed_cols_hist = [
+                        "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
+                        "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)"
+                    ]
+                    df_detailed_hist = df_date_lf[[c for c in detailed_cols_hist if c in df_date_lf.columns]]
+                    
+                    det_hist_header_col, det_hist_copy_col = st.columns([7, 3])
+                    with det_hist_header_col:
+                        st.markdown("#### COT Detailed Breakdown")
+                    with det_hist_copy_col:
+                        render_copy_button(df_detailed_hist, f"hist-det-{date_key}")
+                        
+                    styled_detailed_hist = format_lf_detail_dataframe(df_detailed_hist)
+                    st.dataframe(styled_detailed_hist, use_container_width=True)
                     
                     render_currency_composite_scores(df_date_lf, weights=lf_weights, key_suffix=f"hist-{date_key}")
                     render_lf_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")

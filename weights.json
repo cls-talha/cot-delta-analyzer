@@ -1,5 +1,5 @@
 {
-  "strength": 0.45,
-  "delta": 0.30,
-  "oi_momentum": 0.25
+  "strength": 0.60,
+  "delta": 0.25,
+  "oi_momentum": 0.15
 }

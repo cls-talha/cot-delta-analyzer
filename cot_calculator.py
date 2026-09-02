@@ -6,6 +6,7 @@ Consolidates all categories (LF, AM, DI) into a single table.
 
 import pandas as pd
 from typing import Dict, Optional, List
+from config import contracts_to_billions
 
 CATEGORY_KEYS = {
     "Leveraged Funds": "leveraged_funds",
@@ -43,7 +44,8 @@ def compute_consolidated_table(
 ) -> pd.DataFrame:
     """
     Build a consolidated DataFrame for the current week containing
-    all categories (LF, AM, DI) and their deltas.
+    delta columns (LF Δ, AM Δ, DI Δ) followed by
+    billion-dollar position columns (LF/AM/DI Longs $B, Shorts $B).
     """
     rows = []
     instruments = current_data.get("instruments", {})
@@ -61,8 +63,12 @@ def compute_consolidated_table(
             cat_short = CATEGORY_SHORT[cat_label]
             net, net_pct = _calculate_category_metrics(inst, cat_key)
             
-            row[f"{cat_short} Net Pos"] = net
-            row[f"{cat_short} Net %"] = round(net_pct, 2)
+            # Billion-dollar longs and shorts
+            cat = inst[cat_key]
+            long_val = cat["long"]
+            short_val = cat["short"]
+            row[f"{cat_short} Longs ($B)"] = round(contracts_to_billions(name, long_val), 2)
+            row[f"{cat_short} Shorts ($B)"] = round(contracts_to_billions(name, short_val), 2)
             
             # Calculate delta if previous data exists
             delta = None
@@ -71,7 +77,6 @@ def compute_consolidated_table(
                 _, prev_net_pct = _calculate_category_metrics(prev_inst, cat_key)
                 delta = net_pct - prev_net_pct
             
-            # We'll temporarily store delta, but we want them grouped at the end
             row[f"{cat_short} Δ"] = round(delta, 2) if delta is not None else None
 
         rows.append(row)
@@ -82,7 +87,7 @@ def compute_consolidated_table(
     df = pd.DataFrame(rows)
     df = df.set_index("Currency")
     
-    # Reorder columns so Deltas are right in front of currency / first columns
+    # Reorder columns: Deltas first, then billion-dollar columns
     delta_cols = []
     base_cols = []
     for col in df.columns:
@@ -171,13 +176,13 @@ def compute_lf_detail_table(
     3. Net Percent LF
     4. Net % LF Δ
     5. Δ Total Open Interest
-    6. Total Open Interest
-    7. Δ LF Open Interest
-    8. Total LF Open Interest
-    9. Long Positions
-    10. Short Positions
-    11. Δ Long Positions
-    12. Δ Short Positions
+    6. Δ LF Open Interest
+    7. Δ Long Positions
+    8. Δ Short Positions
+    9. Δ LF Longs ($B)    ← NEW: week-over-week change in LF longs (billions USD)
+    10. Δ LF Shorts ($B)   ← NEW: week-over-week change in LF shorts (billions USD)
+    11. Δ AM Longs ($B)    ← NEW: week-over-week change in AM longs (billions USD)
+    12. Δ AM Shorts ($B)   ← NEW: week-over-week change in AM shorts (billions USD)
     """
     rows = []
     instruments = current_data.get("instruments", {})
@@ -189,8 +194,11 @@ def compute_lf_detail_table(
         inst = instruments[name]
         total_oi = inst.get("open_interest", 0)
         lf = inst.get("leveraged_funds", {})
+        am = inst.get("asset_manager", {})
         long_pos = lf.get("long", 0)
         short_pos = lf.get("short", 0)
+        am_long = am.get("long", 0)
+        am_short = am.get("short", 0)
         
         lf_total_oi = long_pos + short_pos
         net_pos = long_pos - short_pos
@@ -212,8 +220,11 @@ def compute_lf_detail_table(
             prev_inst = previous_data["instruments"][name]
             prev_total_oi = prev_inst.get("open_interest", 0)
             prev_lf = prev_inst.get("leveraged_funds", {})
+            prev_am = prev_inst.get("asset_manager", {})
             prev_long = prev_lf.get("long", 0)
             prev_short = prev_lf.get("short", 0)
+            prev_am_long = prev_am.get("long", 0)
+            prev_am_short = prev_am.get("short", 0)
             prev_lf_total_oi = prev_long + prev_short
             prev_net_pos = prev_long - prev_short
             prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
@@ -223,6 +234,17 @@ def compute_lf_detail_table(
             row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
             row["Δ Long Positions"] = int(long_pos - prev_long)
             row["Δ Short Positions"] = int(short_pos - prev_short)
+
+            # Delta billion-dollar values (week-over-week change)
+            delta_lf_long_contracts = long_pos - prev_long
+            delta_lf_short_contracts = short_pos - prev_short
+            delta_am_long_contracts = am_long - prev_am_long
+            delta_am_short_contracts = am_short - prev_am_short
+
+            row["Δ LF Longs ($B)"] = round(contracts_to_billions(name, delta_lf_long_contracts), 2)
+            row["Δ LF Shorts ($B)"] = round(contracts_to_billions(name, delta_lf_short_contracts), 2)
+            row["Δ AM Longs ($B)"] = round(contracts_to_billions(name, delta_am_long_contracts), 2)
+            row["Δ AM Shorts ($B)"] = round(contracts_to_billions(name, delta_am_short_contracts), 2)
 
         rows.append(row)
 
@@ -236,14 +258,18 @@ def compute_lf_detail_table(
         "Net Percent",
         "Net Percent LF",
         "Net % LF Δ",
-        "Δ Total Open Interest",
-        "Δ LF Open Interest",
-        "Δ Long Positions",
-        "Δ Short Positions",
         "Total Open Interest",
         "Total LF Open Interest",
         "Long Positions",
         "Short Positions",
+        "Δ Total Open Interest",
+        "Δ LF Open Interest",
+        "Δ Long Positions",
+        "Δ Short Positions",
+        "Δ LF Longs ($B)",
+        "Δ LF Shorts ($B)",
+        "Δ AM Longs ($B)",
+        "Δ AM Shorts ($B)",
     ]
 
     existing_cols = [c for c in desired_order if c in df.columns]
@@ -269,6 +295,10 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
             long_pos = lf.get("long", 0)
             short_pos = lf.get("short", 0)
 
+            am = inst.get("asset_manager", {})
+            am_long = am.get("long", 0)
+            am_short = am.get("short", 0)
+
             lf_total_oi = long_pos + short_pos
             net_pos = long_pos - short_pos
             net_pct = (net_pos / total_oi * 100) if total_oi != 0 else 0.0
@@ -292,8 +322,11 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
                     prev_inst = prev_report["instruments"][name]
                     prev_total_oi = prev_inst.get("open_interest", 0)
                     prev_lf = prev_inst.get("leveraged_funds", {})
+                    prev_am = prev_inst.get("asset_manager", {})
                     prev_long = prev_lf.get("long", 0)
                     prev_short = prev_lf.get("short", 0)
+                    prev_am_long = prev_am.get("long", 0)
+                    prev_am_short = prev_am.get("short", 0)
                     prev_lf_total_oi = prev_long + prev_short
                     prev_net_pos = prev_long - prev_short
                     prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
@@ -303,6 +336,16 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
                     row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
                     row["Δ Long Positions"] = int(long_pos - prev_long)
                     row["Δ Short Positions"] = int(short_pos - prev_short)
+
+                    delta_lf_long_contracts = long_pos - prev_long
+                    delta_lf_short_contracts = short_pos - prev_short
+                    delta_am_long_contracts = am_long - prev_am_long
+                    delta_am_short_contracts = am_short - prev_am_short
+
+                    row["Δ LF Longs ($B)"] = round(contracts_to_billions(name, delta_lf_long_contracts), 2)
+                    row["Δ LF Shorts ($B)"] = round(contracts_to_billions(name, delta_lf_short_contracts), 2)
+                    row["Δ AM Longs ($B)"] = round(contracts_to_billions(name, delta_am_long_contracts), 2)
+                    row["Δ AM Shorts ($B)"] = round(contracts_to_billions(name, delta_am_short_contracts), 2)
 
             rows.append(row)
 
@@ -316,14 +359,18 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
         "Net Percent",
         "Net Percent LF",
         "Net % LF Δ",
-        "Δ Total Open Interest",
-        "Δ LF Open Interest",
-        "Δ Long Positions",
-        "Δ Short Positions",
         "Total Open Interest",
         "Total LF Open Interest",
         "Long Positions",
         "Short Positions",
+        "Δ Total Open Interest",
+        "Δ LF Open Interest",
+        "Δ Long Positions",
+        "Δ Short Positions",
+        "Δ LF Longs ($B)",
+        "Δ LF Shorts ($B)",
+        "Δ AM Longs ($B)",
+        "Δ AM Shorts ($B)",
     ]
 
     existing_cols = [c for c in desired_order if c in df.columns]
