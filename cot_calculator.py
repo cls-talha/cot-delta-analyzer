@@ -36,16 +36,15 @@ def _calculate_category_metrics(inst_data: dict, cat_key: str):
     net_pct_cat = (net / total_ls * 100) if total_ls != 0 else 0.0
     
     return int(net), net_pct_cat
-
-
 def compute_consolidated_table(
     current_data: Dict,
     previous_data: Optional[Dict],
 ) -> pd.DataFrame:
     """
-    Build a consolidated DataFrame for the current week containing
-    delta columns (LF Δ, AM Δ, DI Δ) followed by
-    billion-dollar position columns (LF/AM/DI Longs $B, Shorts $B).
+    Build a consolidated DataFrame for the current week.
+    Column order (strictly):
+      LF Δ | AM Δ | DI Δ | LF+AM Long Positions | LF+AM Short Positions | Total OI | Δ Long Positions | Δ Short Positions
+    - Long/Short Positions and their deltas are LF + AM combined (DI excluded).
     """
     rows = []
     instruments = current_data.get("instruments", {})
@@ -55,49 +54,68 @@ def compute_consolidated_table(
             continue
 
         inst = instruments[name]
-        
-        row = {"Currency": name}
-        
-        # Calculate for each category
+        total_oi = inst.get("open_interest", 0)
+
+        # Per-category positions
+        am = inst.get("asset_manager", {})
+        lf = inst.get("leveraged_funds", {})
+
+        am_long  = am.get("long", 0)
+        am_short = am.get("short", 0)
+        lf_long  = lf.get("long", 0)
+        lf_short = lf.get("short", 0)
+
+        # LF + AM combined long / short (DI excluded)
+        total_long  = int(lf_long  + am_long)
+        total_short = int(lf_short + am_short)
+
+        row = {
+            "Currency": name,
+            "LF+AM Long Positions":  total_long,
+            "LF+AM Short Positions": total_short,
+            "Total OI":              int(total_oi),
+        }
+
+        # Net-% deltas per category (LF, AM, DI)
         for cat_label, cat_key in CATEGORY_KEYS.items():
             cat_short = CATEGORY_SHORT[cat_label]
-            net, net_pct = _calculate_category_metrics(inst, cat_key)
-            
-            # Billion-dollar longs and shorts
-            cat = inst[cat_key]
-            long_val = cat["long"]
-            short_val = cat["short"]
-            row[f"{cat_short} Longs ($B)"] = round(contracts_to_billions(name, long_val), 2)
-            row[f"{cat_short} Shorts ($B)"] = round(contracts_to_billions(name, short_val), 2)
-            
-            # Calculate delta if previous data exists
+            _, net_pct = _calculate_category_metrics(inst, cat_key)
             delta = None
             if previous_data and name in previous_data.get("instruments", {}):
                 prev_inst = previous_data["instruments"][name]
                 _, prev_net_pct = _calculate_category_metrics(prev_inst, cat_key)
                 delta = net_pct - prev_net_pct
-            
             row[f"{cat_short} Δ"] = round(delta, 2) if delta is not None else None
+
+        # Combined LF+AM contract delta vs previous week
+        if previous_data and name in previous_data.get("instruments", {}):
+            prev_inst  = previous_data["instruments"][name]
+            prev_am    = prev_inst.get("asset_manager", {})
+            prev_lf    = prev_inst.get("leveraged_funds", {})
+            prev_total_long  = prev_lf.get("long", 0)  + prev_am.get("long", 0)
+            prev_total_short = prev_lf.get("short", 0) + prev_am.get("short", 0)
+            row["Δ Long Positions"]  = int(total_long  - prev_total_long)
+            row["Δ Short Positions"] = int(total_short - prev_total_short)
+        else:
+            row["Δ Long Positions"]  = None
+            row["Δ Short Positions"] = None
 
         rows.append(row)
 
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows)
-    df = df.set_index("Currency")
-    
-    # Reorder columns: Deltas first, then billion-dollar columns
-    delta_cols = []
-    base_cols = []
-    for col in df.columns:
-        if "Δ" in col:
-            delta_cols.append(col)
-        else:
-            base_cols.append(col)
-            
-    df = df[delta_cols + base_cols]
-    return df
+    df = pd.DataFrame(rows).set_index("Currency")
+
+    # Strict column order as requested
+    ordered_cols = [
+        "LF Δ", "AM Δ", "DI Δ",
+        "LF+AM Long Positions", "LF+AM Short Positions", "Total OI",
+        "Δ Long Positions", "Δ Short Positions",
+    ]
+    existing_cols = [c for c in ordered_cols if c in df.columns]
+    return df[existing_cols]
+
 
 
 def compute_historical_table(historical_data_list: List[Dict]) -> pd.DataFrame:
@@ -212,8 +230,8 @@ def compute_lf_detail_table(
             "Net Percent LF": round(net_pct_lf, 2),
             "Total Open Interest": int(total_oi),
             "Total LF Open Interest": int(lf_total_oi),
-            "Long Positions": int(long_pos),
-            "Short Positions": int(short_pos),
+            "LF Long Positions": int(long_pos),
+            "LF Short Positions": int(short_pos),
         }
 
         if previous_data and name in previous_data.get("instruments", {}):
@@ -321,8 +339,8 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
                 "Net Percent LF": round(net_pct_lf, 2),
                 "Total Open Interest": int(total_oi),
                 "Total LF Open Interest": int(lf_total_oi),
-                "Long Positions": int(long_pos),
-                "Short Positions": int(short_pos),
+                "LF Long Positions": int(long_pos),
+                "LF Short Positions": int(short_pos),
             }
 
             if idx + 1 < len(historical_data_list):

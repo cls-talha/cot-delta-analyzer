@@ -209,31 +209,37 @@ def style_delta(val):
 def format_consolidated_dataframe(df: pd.DataFrame):
     """Apply formatting to the consolidated DataFrame."""
     format_dict = {}
-    delta_cols = []
-    
+    delta_pct_cols = []   # LF Δ, AM Δ, DI Δ  — net-% deltas
+    delta_pos_cols = []   # Δ Long Positions, Δ Short Positions — signed contracts
+
     for col in df.columns:
-        if "($B)" in col:
-            format_dict[col] = "${:,.2f}"
-        elif "Δ" in col:
+        if col in ("LF Δ", "AM Δ", "DI Δ"):
             format_dict[col] = "{:+.2f}%"
-            delta_cols.append(col)
+            delta_pct_cols.append(col)
+        elif col in ("Δ Long Positions", "Δ Short Positions"):
+            format_dict[col] = "{:+,.0f}"
+            delta_pos_cols.append(col)
+        elif col in ("LF+AM Long Positions", "LF+AM Short Positions", "Total OI"):
+            format_dict[col] = "{:,.0f}"
 
-    styled = df.style.format(format_dict, na_rep="\u2014")
+    colored_cols = delta_pct_cols + delta_pos_cols
 
-    # Apply conditional coloring to delta columns
-    if delta_cols:
+    styled = df.style.format(format_dict, na_rep="—")
+
+    # Apply conditional coloring to all delta columns
+    if colored_cols:
         if hasattr(styled, "map"):
-            styled = styled.map(style_delta, subset=delta_cols)
+            styled = styled.map(style_delta, subset=colored_cols)
         else:
-            styled = styled.applymap(style_delta, subset=delta_cols)
+            styled = styled.applymap(style_delta, subset=colored_cols)
 
-    # Style the rest
     styled = styled.set_properties(**{
         "text-align": "center",
         "font-size": "0.82rem",
     })
 
     return styled
+
 
 
 def format_historical_dataframe(df: pd.DataFrame):
@@ -273,9 +279,8 @@ def format_lf_detail_dataframe(df: pd.DataFrame):
     
     for col in df.columns:
         if "($B)" in col:
-            # Delta billion-dollar columns — always show sign
-            format_dict[col] = "${:+,.2f}"
-            colored_cols.append(col)
+            # Dollar columns — show with sign but NO color styling, no $ prefix in cell
+            format_dict[col] = "{:+,.2f}"
         elif "Δ" in col or "delta" in col.lower():
             colored_cols.append(col)
             if "%" in col:
@@ -951,7 +956,7 @@ def main():
 
         # ── COT Detailed Breakdown (Current Week) ──
         detailed_cols = [
-            "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
+            "Δ Total Open Interest", "Δ LF Open Interest",
             "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)",
             "AM long Δ", "AM short Δ"
         ]
@@ -1152,7 +1157,7 @@ def main():
                     
                     # ── Historical COT Detailed Breakdown ──
                     detailed_cols_hist = [
-                        "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
+                        "Δ Total Open Interest", "Δ LF Open Interest",
                         "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)",
                         "AM long Δ", "AM short Δ"
                     ]
