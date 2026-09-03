@@ -276,7 +276,7 @@ def format_lf_detail_dataframe(df: pd.DataFrame):
             # Delta billion-dollar columns — always show sign
             format_dict[col] = "${:+,.2f}"
             colored_cols.append(col)
-        elif "Δ" in col:
+        elif "Δ" in col or "delta" in col.lower():
             colored_cols.append(col)
             if "%" in col:
                 format_dict[col] = "{:+.2f}%"
@@ -900,7 +900,7 @@ def main():
     if not df_lf_detail.empty:
         lf_breakdown_cols = [
             "Net Positions", "Net Percent", "Net Percent LF", "Net % LF Δ",
-            "Total Open Interest", "Total LF Open Interest", "Long Positions", "Short Positions"
+            "LF longs Δ", "LF short Δ"
         ]
         df_lf_breakdown = df_lf_detail[[c for c in lf_breakdown_cols if c in df_lf_detail.columns]]
         
@@ -952,7 +952,8 @@ def main():
         # ── COT Detailed Breakdown (Current Week) ──
         detailed_cols = [
             "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
-            "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)"
+            "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)",
+            "AM long Δ", "AM short Δ"
         ]
         df_detailed = df_lf_detail[[c for c in detailed_cols if c in df_lf_detail.columns]]
         
@@ -1136,7 +1137,7 @@ def main():
                     
                     lf_breakdown_cols_hist = [
                         "Net Positions", "Net Percent", "Net Percent LF", "Net % LF Δ",
-                        "Total Open Interest", "Total LF Open Interest", "Long Positions", "Short Positions"
+                        "LF longs Δ", "LF short Δ"
                     ]
                     df_lf_breakdown_hist = df_date_lf[[c for c in lf_breakdown_cols_hist if c in df_date_lf.columns]]
                     
@@ -1152,7 +1153,8 @@ def main():
                     # ── Historical COT Detailed Breakdown ──
                     detailed_cols_hist = [
                         "Δ Total Open Interest", "Δ LF Open Interest", "Δ Long Positions", "Δ Short Positions",
-                        "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)"
+                        "Δ LF Longs ($B)", "Δ LF Shorts ($B)", "Δ AM Longs ($B)", "Δ AM Shorts ($B)",
+                        "AM long Δ", "AM short Δ"
                     ]
                     df_detailed_hist = df_date_lf[[c for c in detailed_cols_hist if c in df_date_lf.columns]]
                     

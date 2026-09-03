@@ -229,17 +229,22 @@ def compute_lf_detail_table(
             prev_net_pos = prev_long - prev_short
             prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
 
-            row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
-            row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
-            row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
-            row["Δ Long Positions"] = int(long_pos - prev_long)
-            row["Δ Short Positions"] = int(short_pos - prev_short)
-
-            # Delta billion-dollar values (week-over-week change)
+            # Delta contract values (week-over-week change)
             delta_lf_long_contracts = long_pos - prev_long
             delta_lf_short_contracts = short_pos - prev_short
             delta_am_long_contracts = am_long - prev_am_long
             delta_am_short_contracts = am_short - prev_am_short
+
+            row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
+            row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
+            row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
+            row["Δ Long Positions"] = int(delta_lf_long_contracts + delta_am_long_contracts)
+            row["Δ Short Positions"] = int(delta_lf_short_contracts + delta_am_short_contracts)
+
+            row["LF longs Δ"] = int(delta_lf_long_contracts)
+            row["LF short Δ"] = int(delta_lf_short_contracts)
+            row["AM long Δ"] = int(delta_am_long_contracts)
+            row["AM short Δ"] = int(delta_am_short_contracts)
 
             row["Δ LF Longs ($B)"] = round(contracts_to_billions(name, delta_lf_long_contracts), 2)
             row["Δ LF Shorts ($B)"] = round(contracts_to_billions(name, delta_lf_short_contracts), 2)
@@ -262,6 +267,10 @@ def compute_lf_detail_table(
         "Total LF Open Interest",
         "Long Positions",
         "Short Positions",
+        "LF longs Δ",
+        "LF short Δ",
+        "AM long Δ",
+        "AM short Δ",
         "Δ Total Open Interest",
         "Δ LF Open Interest",
         "Δ Long Positions",
@@ -331,16 +340,22 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
                     prev_net_pos = prev_long - prev_short
                     prev_net_pct_lf = (prev_net_pos / prev_lf_total_oi * 100) if prev_lf_total_oi != 0 else 0.0
 
-                    row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
-                    row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
-                    row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
-                    row["Δ Long Positions"] = int(long_pos - prev_long)
-                    row["Δ Short Positions"] = int(short_pos - prev_short)
-
+                    # Delta contract values (week-over-week change)
                     delta_lf_long_contracts = long_pos - prev_long
                     delta_lf_short_contracts = short_pos - prev_short
                     delta_am_long_contracts = am_long - prev_am_long
                     delta_am_short_contracts = am_short - prev_am_short
+
+                    row["Net % LF Δ"] = round(net_pct_lf - prev_net_pct_lf, 2)
+                    row["Δ Total Open Interest"] = int(total_oi - prev_total_oi)
+                    row["Δ LF Open Interest"] = int(lf_total_oi - prev_lf_total_oi)
+                    row["Δ Long Positions"] = int(delta_lf_long_contracts + delta_am_long_contracts)
+                    row["Δ Short Positions"] = int(delta_lf_short_contracts + delta_am_short_contracts)
+
+                    row["LF longs Δ"] = int(delta_lf_long_contracts)
+                    row["LF short Δ"] = int(delta_lf_short_contracts)
+                    row["AM long Δ"] = int(delta_am_long_contracts)
+                    row["AM short Δ"] = int(delta_am_short_contracts)
 
                     row["Δ LF Longs ($B)"] = round(contracts_to_billions(name, delta_lf_long_contracts), 2)
                     row["Δ LF Shorts ($B)"] = round(contracts_to_billions(name, delta_lf_short_contracts), 2)
@@ -363,6 +378,10 @@ def compute_lf_detail_historical_table(historical_data_list: List[Dict]) -> pd.D
         "Total LF Open Interest",
         "Long Positions",
         "Short Positions",
+        "LF longs Δ",
+        "LF short Δ",
+        "AM long Δ",
+        "AM short Δ",
         "Δ Total Open Interest",
         "Δ LF Open Interest",
         "Δ Long Positions",
