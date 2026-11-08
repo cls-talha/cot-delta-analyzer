@@ -36,13 +36,13 @@ from commodity_calculator import (
 )
 import warnings
 
-# Suppress standard Python/Streamlit warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
+# Silence the code-level deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="streamlit")
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
 
-# Suppress Streamlit UI-specific warning elements
+# Hide standard error popups in the browser
 st.set_option("client.showErrorDetails", False)
-st.set_option("global.developmentMode", False)
+
 # ──────────────────────────────────────────────────────────────────────
 # Page config
 # ──────────────────────────────────────────────────────────────────────
