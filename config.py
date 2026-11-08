@@ -1,6 +1,6 @@
 """
 Configuration for COT Analyzer Dashboard.
-Contains instrument definitions, release schedule, and URL templates.
+Contains instrument definitions, release schedule, and Socrata dataset info.
 """
 
 from datetime import date, timedelta
@@ -58,28 +58,11 @@ RELEASE_DATES_2026 = sorted([
 
 
 # ──────────────────────────────────────────────────────────────────────
-# URL Templates
+# Socrata API — Financial Futures dataset
 # ──────────────────────────────────────────────────────────────────────
-CURRENT_URL = "https://www.cftc.gov/dea/futures/financial_lf.htm"
-
-# Archive URL template — {MMDDYY} placeholder
-ARCHIVE_URL_TEMPLATE = (
-    "https://www.cftc.gov/sites/default/files/files/dea/cotarchives"
-    "/{year}/futures/financial_lf{mmddyy}.htm"
-)
-
-
-def get_archive_url(release_date: date) -> str:
-    """Build archive URL from a release date by finding the prior Tuesday."""
-    # CFTC report dates are always Tuesdays. Find the most recent Tuesday.
-    offset = (release_date.weekday() - 1) % 7
-    report_date = release_date - timedelta(days=offset)
-    
-    mmddyy = report_date.strftime("%m%d%y")
-    return ARCHIVE_URL_TEMPLATE.format(
-        year=report_date.year,
-        mmddyy=mmddyy,
-    )
+# Dataset ID: Traders in Financial Futures — Futures Only
+FINANCIAL_DATASET_ID = "gpe5-46if"
+SOCRATA_HOST = "publicreporting.cftc.gov"
 
 
 # ──────────────────────────────────────────────────────────────────────

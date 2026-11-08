@@ -25,6 +25,15 @@ from cot_calculator import (
     calculate_lf_composite_index,
     CATEGORY_SHORT,
 )
+from commodity_fetcher import (
+    fetch_commodity_current_week,
+    fetch_commodity_archive_week,
+)
+from commodity_parser import parse_commodity_report
+from commodity_calculator import (
+    compute_commodity_table,
+    compute_commodity_historical_table,
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Page config
@@ -135,28 +144,20 @@ st.markdown("""
 CACHE_FILE = "data/cot_cache.json"
 
 
-def get_cached_report(date_str: str) -> Optional[dict]:
-    """Retrieve report from disk cache."""
+def _read_cache() -> dict:
+    """Read the full disk cache file and return it as a dict."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
-                cache = json.load(f)
-                return cache.get(date_str)
+                return json.load(f)
         except Exception as e:
             print(f"[Cache] Error reading cache file: {e}")
-    return None
+    return {}
 
 
-def save_cached_report(date_str: str, report_data: dict):
-    """Save report to disk cache."""
+def _write_cache(cache: dict):
+    """Write the full disk cache dict to file."""
     try:
-        cache = {}
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "r") as f:
-                cache = json.load(f)
-        
-        cache[date_str] = report_data
-        
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
         with open(CACHE_FILE, "w") as f:
             json.dump(cache, f, indent=2)
@@ -164,34 +165,132 @@ def save_cached_report(date_str: str, report_data: dict):
         print(f"[Cache] Error writing cache file: {e}")
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_current_data():
-    """Fetch and parse current week data (cached 1 hour)."""
-    raw = fetch_current_week()
-    if raw is None:
-        return None
-    return parse_report(raw)
+def get_cached_report(date_str: str) -> Optional[dict]:
+    """Retrieve COT (forex) report from disk cache."""
+    return _read_cache().get(date_str)
+
+
+def _is_valid_cot(parsed: Optional[dict]) -> bool:
+    """Return True only if the parsed COT result contains real data."""
+    if not parsed:
+        return False
+    if not parsed.get("report_date"):
+        return False
+    if not parsed.get("instruments"):
+        return False
+    return True
+
+
+def _is_valid_html(raw: Optional[str]) -> bool:
+    """
+    Return True only if raw HTML looks like a real CFTC report page.
+    Cloudflare challenge pages contain 'Just a moment' and are small (<15 KB).
+    """
+    if not raw:
+        return False
+    if "Just a moment" in raw:
+        return False
+    if len(raw) < 5_000:
+        return False
+    return True
+
+
+def save_cached_report(date_str: str, report_data: dict):
+    """Save COT (forex) report to disk cache only if it contains valid data."""
+    if not _is_valid_cot(report_data):
+        print(f"[Cache] Skipping save for {date_str}: parsed data is empty or invalid.")
+        return
+    cache = _read_cache()
+    cache[date_str] = report_data
+    _write_cache(cache)
+
+
+def get_cached_commodity_report(date_str: str) -> Optional[dict]:
+    """Retrieve commodity report (parsed dict) from disk cache."""
+    cache = _read_cache()
+    return cache.get(f"commodity_{date_str}")
+
+
+def save_cached_commodity_report(date_str: str, parsed: dict):
+    """Save parsed commodity report to disk cache if it contains valid data."""
+    if not parsed or not parsed.get("report_date") or not parsed.get("instruments"):
+        print(f"[Cache] Skipping commodity save for {date_str}: empty or invalid.")
+        return
+    cache = _read_cache()
+    cache[f"commodity_{date_str}"] = parsed
+    _write_cache(cache)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_archive_data(release_date_str: str):
-    """Fetch and parse archive week data (uses persistent disk cache + memory cache)."""
-    # 1. Try disk cache first
+def load_week_data(release_date_str: str, is_latest: bool = False) -> Optional[dict]:
+    """
+    Load COT (forex/financial) data for a specific release date via Socrata API.
+
+    Strategy:
+      1. Check disk cache — if found, return immediately.
+      2. Fetch records from Socrata.
+      3. Parse, save to disk cache, and return.
+    """
+    # 1. Disk cache hit
     cached = get_cached_report(release_date_str)
-    if cached:
+    if cached and _is_valid_cot(cached):
         return cached
 
-    # 2. Fetch from web
-    parts = release_date_str.split("-")
-    d = date(int(parts[0]), int(parts[1]), int(parts[2]))
-    raw = fetch_archive_week(d)
-    if raw is None:
+    # 2. Fetch from Socrata
+    if is_latest:
+        records = fetch_current_week()
+        if not records:
+            # Fallback: fetch by specific release date
+            parts = release_date_str.split("-")
+            d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            records = fetch_archive_week(d)
+    else:
+        parts = release_date_str.split("-")
+        d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+        records = fetch_archive_week(d)
+
+    if not records:
         return None
-    
-    parsed = parse_report(raw)
+
+    parsed = parse_report(records)
     if parsed:
-        # Save to disk cache
         save_cached_report(release_date_str, parsed)
+    return parsed
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_commodity_week_data(release_date_str: str, is_latest: bool = False) -> Optional[dict]:
+    """
+    Load commodity COT data for a specific release date via Socrata API.
+
+    Strategy:
+      1. Check disk cache — if found, return immediately.
+      2. Fetch records from Socrata.
+      3. Parse, save to disk cache, and return.
+    """
+    # 1. Disk cache hit
+    cached = get_cached_commodity_report(release_date_str)
+    if cached and cached.get("report_date"):
+        return cached
+
+    # 2. Fetch from Socrata
+    if is_latest:
+        records = fetch_commodity_current_week()
+        if not records:
+            parts = release_date_str.split("-")
+            d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            records = fetch_commodity_archive_week(d)
+    else:
+        parts = release_date_str.split("-")
+        d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+        records = fetch_commodity_archive_week(d)
+
+    if not records:
+        return None
+
+    parsed = parse_commodity_report(records)
+    if parsed and parsed.get("report_date"):
+        save_cached_commodity_report(release_date_str, parsed)
     return parsed
 
 
@@ -204,6 +303,38 @@ def style_delta(val):
     elif val < 0:
         return "color: #f87171; font-weight: 600; background-color: rgba(248, 113, 113, 0.1);"
     return "color: #94a3b8"
+
+
+def format_commodity_dataframe(df: pd.DataFrame):
+    """Apply formatting to the Commodity Legacy COT DataFrame."""
+    format_dict = {
+        "Long": "{:,.0f}",
+        "Short": "{:,.0f}",
+        "Spread": "{:,.0f}",
+        "Net": "{:,.0f}",
+        "Long %": "{:.0f}%",
+        "Short %": "{:.0f}%",
+        "Open Int.": "{:,.0f}",
+        "Δ Net": "{:+,.0f}",
+        "Δ Long": "{:+,.0f}",
+        "Δ Short": "{:+,.0f}",
+    }
+
+    styled = df.style.format(format_dict, na_rep="—")
+    
+    delta_cols = [c for c in ["Δ Net", "Δ Long", "Δ Short"] if c in df.columns]
+
+    if delta_cols:
+        if hasattr(styled, "map"):
+            styled = styled.map(style_delta, subset=delta_cols)
+        else:
+            styled = styled.applymap(style_delta, subset=delta_cols)
+
+    styled = styled.set_properties(**{
+        "text-align": "center",
+        "font-size": "0.85rem",
+    })
+    return styled
 
 
 def format_consolidated_dataframe(df: pd.DataFrame):
@@ -772,12 +903,14 @@ def main():
     """, unsafe_allow_html=True)
     
     # ── Controls & Status Row ──
-    recent_dates = get_recent_release_dates(count=100)
+    # Get all release dates up to today (increase count for deeper history)
+    all_dates = get_recent_release_dates(count=200)
+    recent_dates = [d for d in all_dates if d <= date.today()]
     
     col1, col2, col3, _ = st.columns([2, 3, 3, 4])
     with col1:
         if st.button("Refresh Data", use_container_width=True, type="primary"):
-            st.cache_data.clear()
+            # Do not clear the entire cache; rely on disk cache to avoid re‑fetching existing weeks
             st.rerun()
             
     with col2:
@@ -797,35 +930,49 @@ def main():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Load Data ──
+    # All weeks — including the current/latest release — are fetched through
+    # the unified disk-cache-first loader.  The most-recent release date gets
+    # is_latest=True so it falls back to the live CFTC URL if the archive
+    # URL for that date is not yet available.
     reports_data = []
-    
+    comm_reports_data = []
+
     with st.spinner("Loading COT report history..."):
-        current = load_current_data()
-        if current:
-            reports_data.append(current)
-        else:
-            st.error("Failed to fetch current week data.")
-            return
-            
-        # We display a progress bar when loading from the web
-        archive_dates = recent_dates[1:]
-        total_dates = len(archive_dates)
-        
+        total_dates = len(recent_dates)
+
         if total_dates > 0:
             progress_bar = st.progress(0.0)
             progress_text = st.empty()
-            
-            for idx, archive_date in enumerate(archive_dates):
+
+            for idx, rel_date in enumerate(recent_dates):
                 progress_percent = (idx + 1) / total_dates
                 progress_bar.progress(progress_percent)
-                progress_text.text(f"Loading archive report for {archive_date.strftime('%b %d, %Y')} ({idx+1}/{total_dates})...")
-                
-                arch = load_archive_data(archive_date.isoformat())
-                if arch:
-                    reports_data.append(arch)
-                    
+                date_str = rel_date.isoformat()
+                is_latest = (idx == 0)  # most-recent release date
+
+                progress_text.text(
+                    f"Loading {'current' if is_latest else 'archive'} report for "
+                    f"{rel_date.strftime('%b %d, %Y')} ({idx+1}/{total_dates})..."
+                )
+
+                week = load_week_data(date_str, is_latest=is_latest)
+                if week:
+                    reports_data.append(week)
+                elif is_latest:
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.error("Failed to fetch current week data.")
+                    return
+
+                comm_week = load_commodity_week_data(date_str, is_latest=is_latest)
+                if comm_week:
+                    comm_reports_data.append(comm_week)
+
             progress_bar.empty()
             progress_text.empty()
+        else:
+            st.error("No release dates found.")
+            return
 
     # Deduplicate reports by report_date to prevent non-unique index errors
     seen_dates = set()
@@ -837,6 +984,16 @@ def main():
                 seen_dates.add(d)
                 deduped_reports.append(r)
     reports_data = deduped_reports
+    
+    seen_comm_dates = set()
+    deduped_comm_reports = []
+    for r in comm_reports_data:
+        if r and "report_date" in r and r["report_date"]:
+            d = r["report_date"]
+            if d not in seen_comm_dates:
+                seen_comm_dates.add(d)
+                deduped_comm_reports.append(r)
+    comm_reports_data = deduped_comm_reports
 
     if not reports_data:
         st.error("No data available.")
@@ -844,6 +1001,25 @@ def main():
 
     current_data = reports_data[0]
     previous_data = reports_data[1] if len(reports_data) > 1 else None
+
+    # ── Load & Render Commodity Table (Before Current Week Overview) ──
+    comm_current = comm_reports_data[0] if comm_reports_data else None
+    comm_previous = comm_reports_data[1] if len(comm_reports_data) > 1 else None
+
+    df_commodity_history = compute_commodity_historical_table(comm_reports_data)
+
+    if comm_current:
+        df_commodity = compute_commodity_table(comm_current, comm_previous)
+        if not df_commodity.empty:
+            comm_header_col, comm_copy_col = st.columns([7, 3])
+            with comm_header_col:
+                st.markdown("### Commodity COT (Disaggregated Managed Money)")
+            with comm_copy_col:
+                render_copy_button(df_commodity, "commodity-overview")
+
+            styled_commodity = format_commodity_dataframe(df_commodity)
+            st.dataframe(styled_commodity, use_container_width=True)
+
 
     # ── Consolidated Table (Current Week) ──
     df_consolidated = compute_consolidated_table(current_data, previous_data)
@@ -1114,6 +1290,57 @@ def main():
         render_lf_composite_strength_grid(df_lf_detail, weights=lf_weights, key_suffix="curr")
         render_currency_composite_scores(df_lf_detail, weights=lf_weights, key_suffix="curr")
 
+        # ── Commodity Position Visualization ──
+        if not df_commodity_history.empty:
+            st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.05); margin: 2rem 0;'>", unsafe_allow_html=True)
+            st.markdown("### Commodity Position Visualization")
+            
+            available_commodities = df_commodity_history.index.get_level_values("Commodity").unique().tolist()
+            available_comm_dates = df_commodity_history.index.get_level_values("Report Date").unique().tolist()
+            
+            c_weeks = st.selectbox("Historical Weeks to View", options=[4, 7, 12, 24, 52], index=1, key="comm_weeks")
+            comm_chart_dates = available_comm_dates[:c_weeks]
+            
+            selected_commodity = st.selectbox("Select Commodity", options=available_commodities, index=0, key="comm_select")
+            
+            if selected_commodity:
+                # Filter data
+                df_comm_hist_sel = df_commodity_history.loc[df_commodity_history.index.get_level_values("Commodity") == selected_commodity]
+                df_comm_hist_sel = df_comm_hist_sel[df_comm_hist_sel.index.get_level_values("Report Date").isin(comm_chart_dates)].reset_index()
+                df_comm_hist_sel = df_comm_hist_sel.iloc[::-1] # Oldest to newest
+                
+                ccol1, ccol2 = st.columns(2)
+                
+                with ccol1:
+                    st.markdown(f"**{selected_commodity} - Net vs Δ Net**")
+                    melt_net = df_comm_hist_sel.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["Net", "Δ Net"],
+                        var_name="Metric",
+                        value_name="Contracts"
+                    )
+                    fig_comm_net = px.bar(melt_net, x="Report Date", y="Contracts", color="Metric", barmode="group",
+                                         color_discrete_sequence=["#1a80bb", "#ea801c"], template="plotly_dark",
+                                         title="Net Positions")
+                    fig_comm_net.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_comm_net, use_container_width=True)
+                    
+                with ccol2:
+                    st.markdown(f"**{selected_commodity} - Long/Short vs Δ**")
+                    melt_ls = df_comm_hist_sel.melt(
+                        id_vars=["Report Date"],
+                        value_vars=["Long", "Δ Long", "Short", "Δ Short"],
+                        var_name="Metric",
+                        value_name="Contracts"
+                    )
+                    fig_comm_ls = px.bar(melt_ls, x="Report Date", y="Contracts", color="Metric", barmode="group",
+                                        color_discrete_sequence=["#298c8c", "#4ade80", "#f87171", "#f1a226"], template="plotly_dark",
+                                        title="Long & Short Positions")
+                    fig_comm_ls.update_layout(margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_comm_ls, use_container_width=True)
+
+        st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
+
     # ── Historical Data (Last X Reports) ──
     st.markdown(f"### Historical Data (Last {len(reports_data)} Reports)")
     
@@ -1175,6 +1402,19 @@ def main():
                     render_currency_composite_scores(df_date_lf, weights=lf_weights, key_suffix=f"hist-{date_key}")
                     render_lf_strength_grid(df_date_lf, key_suffix=f"hist-{date_key}")
                     render_lf_composite_strength_grid(df_date_lf, weights=lf_weights, key_suffix=f"hist-{date_key}")
+                
+                # ── Historical Commodity Data ──
+                if not df_commodity_history.empty and d in df_commodity_history.index.get_level_values("Report Date"):
+                    df_date_comm = df_commodity_history.xs(d, level="Report Date")
+                    
+                    comm_hist_header_col, comm_hist_copy_col = st.columns([7, 3])
+                    with comm_hist_header_col:
+                        st.markdown("#### Commodity COT (Disaggregated Managed Money)")
+                    with comm_hist_copy_col:
+                        render_copy_button(df_date_comm, f"hist-comm-{date_key}")
+                        
+                    styled_comm_hist = format_commodity_dataframe(df_date_comm)
+                    st.dataframe(styled_comm_hist, use_container_width=True)
 
 
 
