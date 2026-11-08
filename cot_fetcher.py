@@ -21,26 +21,19 @@ from sodapy import Socrata
 
 from config import RELEASE_DATES_2026
 
+import streamlit as st
+from typing import Optional
+
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Load optional app token from .env
-# ---------------------------------------------------------------------------
-def _load_app_token() -> Optional[str]:
-    """Read SOCRATA_APP_TOKEN from .env file if present."""
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("SOCRATA_APP_TOKEN="):
-                    token = line.split("=", 1)[1].strip()
-                    return token if token else None
-    return None
 
+def _load_app_token() -> Optional[str]:
+    """Read SOCRATA_APP_TOKEN from Streamlit secrets."""
+    return st.secrets.get("SOCRATA_APP_TOKEN")
 
 _APP_TOKEN = _load_app_token()
+
 
 # ---------------------------------------------------------------------------
 # Socrata client
