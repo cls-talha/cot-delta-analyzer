@@ -34,7 +34,15 @@ from commodity_calculator import (
     compute_commodity_table,
     compute_commodity_historical_table,
 )
+import warnings
 
+# Suppress standard Python/Streamlit warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="streamlit")
+
+# Suppress Streamlit UI-specific warning elements
+st.set_option("client.showErrorDetails", False)
+st.set_option("global.developmentMode", False)
 # ──────────────────────────────────────────────────────────────────────
 # Page config
 # ──────────────────────────────────────────────────────────────────────
