@@ -34,14 +34,7 @@ from commodity_calculator import (
     compute_commodity_table,
     compute_commodity_historical_table,
 )
-import warnings
-
-# Silence the code-level deprecation warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="streamlit")
-warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
-
-# Hide standard error popups in the browser
-st.set_option("client.showErrorDetails", False)
+from supabase_service import push_weekly_data_to_supabase
 
 # ──────────────────────────────────────────────────────────────────────
 # Page config
@@ -1015,6 +1008,7 @@ def main():
     comm_previous = comm_reports_data[1] if len(comm_reports_data) > 1 else None
 
     df_commodity_history = compute_commodity_historical_table(comm_reports_data)
+    df_commodity = None
 
     if comm_current:
         df_commodity = compute_commodity_table(comm_current, comm_previous)
@@ -1190,6 +1184,16 @@ def main():
 
         styled_detailed = format_lf_detail_dataframe(df_detailed)
         st.dataframe(styled_detailed, use_container_width=True)
+
+        # ── Push Current Week Data to Supabase (Only if new week) ──
+        push_weekly_data_to_supabase(
+            comm_current_date=comm_current.get("report_date") if comm_current else None,
+            df_commodity=df_commodity,
+            fin_current_date=current_data.get("report_date") if current_data else None,
+            df_consolidated=df_consolidated,
+            df_lf_breakdown=df_lf_breakdown,
+            df_detailed=df_detailed,
+        )
 
 
         # ── Historical + Current Visualization ──

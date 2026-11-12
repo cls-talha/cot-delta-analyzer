@@ -9,30 +9,39 @@ App token: shared with cot_fetcher -- set SOCRATA_APP_TOKEN in .env.
 """
 
 import logging
-import streamlit as st
-
+import os
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Any
 
 from sodapy import Socrata
 
 logger = logging.getLogger(__name__)
-logger = logging.getLogger(__name__)
-
-_APP_TOKEN = st.secrets.get("SOCRATA_APP_TOKEN")
-
-_CLIENT = Socrata(
-    "publicreporting.cftc.gov",
-    _APP_TOKEN,
-    timeout=60
-)
-
-if _APP_TOKEN:
-    logger.info("Commodity Fetcher: Socrata token configured.")
-else:
-    logger.warning("Commodity Fetcher: running without app token.")
 
 
+# ---------------------------------------------------------------------------
+# Load app token from Streamlit secrets, env, or .env (shared with cot_fetcher)
+# ---------------------------------------------------------------------------
+def _load_app_token() -> Optional[str]:
+    try:
+        from supabase_service import get_secret
+        token = get_secret("SOCRATA_APP_TOKEN")
+        if token:
+            return token
+    except Exception:
+        pass
+
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("SOCRATA_APP_TOKEN="):
+                    token = line.split("=", 1)[1].strip()
+                    return token if token else None
+    return None
+
+
+_APP_TOKEN = _load_app_token()
 
 # ---------------------------------------------------------------------------
 # Socrata client
